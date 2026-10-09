@@ -43,8 +43,6 @@ esp_err_t network_start(const rf_management_settings_t *settings) {
     ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_events,NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_events,NULL));
-    /* Credentials must be provisioned locally in namespace 'wifi', not built into firmware.
-       No open recovery AP is started by default. */
     char ssid[33]={0},password[65]={0};
     size_t sn=sizeof(ssid),pn=sizeof(password);
     nvs_handle_t h;
