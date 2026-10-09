@@ -1,1 +1,1 @@
-idf_component_register(SRCS "main.c" INCLUDE_DIRS "." REQUIRES driver esp_timer)
+idf_component_register(SRCS "main.c" "network.c" "web.c" "config_store.c" "management_settings.c" "time_service.c" INCLUDE_DIRS "." REQUIRES driver esp_timer esp_wifi esp_event esp_netif esp_http_server nvs_flash lwip)
