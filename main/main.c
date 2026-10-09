@@ -48,5 +48,6 @@ void app_main(void) {
     if(e!=ESP_OK) { ESP_LOGW(TAG,"Network unavailable: %s",esp_err_to_name(e)); return; }
     ESP_ERROR_CHECK(rf_time_service_start(settings.ntp_server));
     /* Read-only diagnostics only. No unauthenticated state-changing endpoints. */
-    ESP_ERROR_CHECK(web_start());
+    e=web_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable (TLS provisioning required): %s",esp_err_to_name(e));
 }
