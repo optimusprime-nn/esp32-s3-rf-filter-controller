@@ -1,6 +1,6 @@
 #include "management_settings.h"
 #include "nvs.h"
-#include "esp_netif_ip_addr.h"
+#include "lwip/ip4_addr.h"
 #include <string.h>
 #include <ctype.h>
 static bool valid_dns(const char *s, size_t max, bool dots) {
@@ -16,14 +16,24 @@ static bool valid_dns(const char *s, size_t max, bool dots) {
     return s[n-1]!='-';
 }
 static bool valid_ip(const char *str) {
-    esp_ip4_addr_t addr; return str && esp_netif_str_to_ip4(str,&addr)!=NULL;
+    ip4_addr_t addr;
+    return str && strnlen(str,16)<16 && ip4addr_aton(str,&addr);
+}
+static bool valid_static(const rf_management_settings_t *s) {
+    if(!valid_ip(s->ipv4)||!valid_ip(s->netmask)||!valid_ip(s->gateway)||!valid_ip(s->dns)) return false;
+    ip4_addr_t ip,mask,gw;
+    ip4addr_aton(s->ipv4,&ip); ip4addr_aton(s->netmask,&mask); ip4addr_aton(s->gateway,&gw);
+    uint32_t m=lwip_ntohl(mask.addr), a=lwip_ntohl(ip.addr), g=lwip_ntohl(gw.addr);
+    if(!m || ((~m)&((~m)+1))!=0 || (a&~m)==0 || (a&~m)==(~m)) return false;
+    if((a&m)!=(g&m) || a==g) return false;
+    return true;
 }
 bool rf_settings_valid(const rf_management_settings_t *s) {
     if(!s || !valid_dns(s->hostname,RF_HOSTNAME_MAX,false) ||
        !valid_dns(s->fqdn,RF_FQDN_MAX,true) ||
        !valid_dns(s->ntp_server,RF_NTP_MAX,true)) return false;
     if(s->acme_enabled && (!strchr(s->fqdn,'.') || !valid_dns(s->cloudflare_zone,RF_FQDN_MAX,true))) return false;
-    return s->dhcp || (valid_ip(s->ipv4) && valid_ip(s->netmask) && valid_ip(s->gateway) && valid_ip(s->dns));
+    return s->dhcp || valid_static(s);
 }
 static const rf_management_settings_t defaults={
     .dhcp=true,.hostname="rf-controller",.fqdn="rf-controller.local",.ntp_server="pool.ntp.org"
