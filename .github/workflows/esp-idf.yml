@@ -4,14 +4,19 @@ on:
     branches: [main, 'feature/**']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Build firmware
-        uses: espressif/esp-idf-ci-action@v1
-        with:
-          esp_idf_version: v5.4.2
-          target: esp32s3
-          path: '.'
+      - name: Build firmware (GitHub Container Registry)
+        run: |
+          docker run --rm \
+            -e IDF_TARGET=esp32s3 \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            ghcr.io/espressif/idf:v5.4.2 \
+            /bin/bash -lc 'git config --global --add safe.directory /project && idf.py build'
