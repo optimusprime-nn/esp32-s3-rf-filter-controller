@@ -13,3 +13,14 @@ Two independent 4-wire PWM fan headers are planned: FAN1 and FAN2. Firmware now 
 
 ## Software
 `rf_fans_init()` initializes both channels at 100%. `rf_fan_set_duty(0, percent)` and `rf_fan_set_duty(1, percent)` allow 20..100%. No persistent duty setting or web write endpoint exists. The outputs are independently controllable, while sharing a single 25 kHz timer.
+
+## Confirmed fan specification (2026-10-16)
+Both fans are standard **12 V four-wire PWM fans**. Provide two four-pin connectors, with pin order per the selected fan datasheet (common PC convention: 1=GND, 2=+12V, 3=TACH, 4=PWM). Do not assume all vendor harnesses have the same physical keying or pinout.
+
+- Supply: regulated 12 V, sized for the combined running and startup/stall currents of both selected fans, with appropriate overcurrent protection and bulk decoupling.
+- Control: two separate approximately 25 kHz open-collector/open-drain sinks, with the fan-side pull-up and electrical limits verified against the fan manufacturer's specifications. The microcontroller must not drive a fan PWM pin push-pull.
+- Feedback: two independent tachometer channels, provisionally GPIO17 and GPIO18; add 3.3 V-compatible pull-ups and protection. Confirm pulses-per-revolution (often two) from the selected fan datasheet before calculating RPM.
+- Safety: design the transistor stages so unpowered MCU, boot, reset, or disconnected PWM control results in a released/high PWM line (full fan speed for compatible 4-wire fans). This must be validated electrically. Software default 100% is not a substitute for a hardware fail-safe.
+- Reserve both fan channels in the KiCad schematic, including test points and appropriate grounds. GPIO allocations are provisional pending complete pin conflict review.
+
+**Not yet implemented:** tach capture and RPM computation, fan fault alarm, temperature sensor, thermal control loop, web configuration, or physical KiCad fan circuitry.
