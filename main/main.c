@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "management_settings.h"
 #include "time_service.h"
+#include "fan_control.h"
 #define RF_A_GPIO GPIO_NUM_4
 #define RF_B_GPIO GPIO_NUM_5
 #define RADXA_RESET_GPIO GPIO_NUM_6
@@ -37,6 +38,7 @@ void app_main(void) {
         .mode=GPIO_MODE_OUTPUT,.pull_up_en=GPIO_PULLUP_DISABLE,
         .pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
     ESP_ERROR_CHECK(gpio_config(&cfg));
+    ESP_ERROR_CHECK(rf_fans_init());
     ESP_ERROR_CHECK(config_store_init());
     uint8_t port=1;
     if(config_store_load_port(&port)!=ESP_OK) port=1;
