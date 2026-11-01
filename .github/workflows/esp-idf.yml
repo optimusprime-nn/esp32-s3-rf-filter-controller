@@ -1,0 +1,36 @@
+name: ESP-IDF Build
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build firmware (ESP-IDF v6.1)
+        run: |
+          docker run --rm \
+            -e IDF_TARGET=esp32s3 \
+            -e IDF_GIT_SAFE_DIR=/project \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            espressif/idf:v6.1 \
+            idf.py build size
+      - name: Upload firmware and build configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: rf-controller-esp32s3-idf-v6.1
+          path: |
+            build/*.bin
+            build/*.elf
+            build/*.map
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/flasher_args.json
+            sdkconfig
+          if-no-files-found: error
