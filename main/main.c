@@ -14,6 +14,7 @@ extern esp_err_t config_store_init(void);
 extern esp_err_t config_store_load_port(uint8_t *port);
 extern esp_err_t network_start(const rf_management_settings_t *settings);
 extern esp_err_t web_start(void);
+extern esp_err_t rf_usb_console_start(void);
 static const char *TAG="rf_filter";
 static esp_err_t select_filter(uint8_t port) {
     if(port<1 || port>4) return ESP_ERR_INVALID_ARG;
@@ -40,6 +41,9 @@ void app_main(void) {
     /* A panic here would reboot-loop and release the RF inhibit output on every reset. */
     esp_err_t e=config_store_init();
     if(e!=ESP_OK) { ESP_LOGE(TAG,"NVS unavailable, staying offline: %s",esp_err_to_name(e)); return; }
+    /* Before anything below can return early: an unprovisioned device must still be reachable over USB. */
+    e=rf_usb_console_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"USB provisioning console unavailable: %s",esp_err_to_name(e));
     uint8_t port=1;
     if(config_store_load_port(&port)!=ESP_OK) port=1;
     ESP_ERROR_CHECK(select_filter(port));
