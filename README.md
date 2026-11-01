@@ -13,7 +13,8 @@ idf.py set-target esp32s3
 idf.py build size
 ```
 
-CI uses the official `espressif/idf:v6.1` Docker Hub image and builds pushes to
+CI runs on the org's self-hosted Linux runners, skipping fork pull requests.
+It runs `tests/host/run.sh`, then uses the official `espressif/idf:v6.1` Docker Hub image to build pushes to
 `main`/`feature/**` and all pull requests, including stacked PRs. Successful runs
 upload firmware, ELF/map files, flash arguments and the generated configuration.
 See [the migration notes](docs/ESP_IDF_6_1_MIGRATION.md) for scope and validation.
