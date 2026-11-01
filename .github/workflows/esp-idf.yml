@@ -6,12 +6,17 @@ on:
   workflow_dispatch:
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Public repository: never run fork pull requests on self-hosted runners.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, big]
     timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Run host tests
+        run: |
+          docker run --rm             -v "$GITHUB_WORKSPACE:/project"             -w /project             gcc:14             sh tests/host/run.sh
       - name: Build firmware (ESP-IDF v6.1)
         run: |
           docker run --rm \
@@ -34,3 +39,7 @@ jobs:
             build/flasher_args.json
             sdkconfig
           if-no-files-found: error
+      - name: Return build output to the runner user
+        if: always()
+        run: |
+          docker run --rm             -v "$GITHUB_WORKSPACE:/project"             espressif/idf:v6.1             chown -R "$(id -u):$(id -g)" /project
