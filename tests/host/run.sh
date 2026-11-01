@@ -7,3 +7,6 @@ gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address
 gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
     -Imain -Itests/host/stubs tests/host/test_provisioning.c main/provisioning.c main/console_line.c -o "$out/test_provisioning"
 "$out/test_provisioning"
+gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
+    -Imain -Itests/host/stubs tests/host/test_session.c main/session.c -o "$out/test_session"
+"$out/test_session"
