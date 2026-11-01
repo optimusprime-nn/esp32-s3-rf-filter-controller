@@ -13,7 +13,8 @@ idf.py set-target esp32s3
 idf.py build size
 ```
 
-CI runs on the org's self-hosted Linux runners, skipping fork pull requests.
+CI runs on the org's self-hosted Linux runners for `main` and on GitHub-hosted
+runners for pull requests, feature branches and tags.
 It runs `tests/host/run.sh`, then uses the official `espressif/idf:v6.1` Docker Hub image to build pushes to
 `main`/`feature/**` and all pull requests, including stacked PRs. Successful runs
 upload firmware, ELF/map files, flash arguments and the generated configuration.
