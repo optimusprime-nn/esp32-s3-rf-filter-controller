@@ -43,6 +43,11 @@ static esp_err_t static_address(const rf_management_settings_t *s) {
     ip4addr_aton(s->dns,(ip4_addr_t*)&dns.ip.u_addr.ip4);
     return esp_netif_set_dns_info(sta_netif,ESP_NETIF_DNS_MAIN,&dns);
 }
+esp_err_t rf_network_get_ip(char *out, size_t len) {
+    esp_netif_ip_info_t ip;
+    if(!sta_netif || esp_netif_get_ip_info(sta_netif,&ip)!=ESP_OK || !ip.ip.addr) return ESP_ERR_INVALID_STATE;
+    return esp_ip4addr_ntoa(&ip.ip,out,(int)len)?ESP_OK:ESP_ERR_INVALID_SIZE;
+}
 esp_err_t network_start(const rf_management_settings_t *settings) {
     if(!settings || !rf_settings_valid(settings)) return ESP_ERR_INVALID_ARG;
     ESP_ERROR_CHECK(esp_netif_init());

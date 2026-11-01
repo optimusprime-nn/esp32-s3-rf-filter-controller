@@ -1,13 +1,18 @@
 #include "console_line.h"
+#include "filter.h"
 #include "provisioning.h"
+#include "session.h"
 #include "driver/usb_serial_jtag.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 static const char *TAG="usb_console";
 #define PEM_LINE_MAX 128
+extern esp_err_t rf_network_get_ip(char *out, size_t len);
 static void put(const char *s) {
     usb_serial_jtag_write_bytes(s,strlen(s),pdMS_TO_TICKS(100));
 }
@@ -48,7 +53,11 @@ static void set_password(void) {
     if(ok) { put("Repeat: "); ok=read_line(second,sizeof(second),false); }
     if(ok) {
         if(strcmp(first,second)) put("ERROR: passwords differ\r\n");
-        else report(rf_provision_set_device_password(first));
+        else {
+            esp_err_t e=rf_provision_set_device_password(first);
+            if(e==ESP_OK) rf_session_destroy();
+            report(e);
+        }
     }
     rf_secure_zero(first,sizeof(first));
     rf_secure_zero(second,sizeof(second));
@@ -86,9 +95,24 @@ static void set_tls(void) {
     if(key) { rf_secure_zero(key,cap); free(key); }
     free(cert);
 }
+static void show_filter(void) {
+    char line[32];
+    snprintf(line,sizeof(line),"Filter: %u\r\n",(unsigned)rf_filter_current());
+    put(line);
+}
+static void select_port(const char *arg) {
+    if(strlen(arg)!=1 || arg[0]<'1' || arg[0]>'4') { put("ERROR: filter must be 1 to 4\r\n"); return; }
+    esp_err_t e=rf_filter_select((uint8_t)(arg[0]-'0'));
+    if(e==ESP_OK) show_filter();
+    else report(e);
+}
 static void show_status(void) {
     rf_provision_status_t s;
+    char ip[16];
     rf_provision_get_status(&s);
+    put("Firmware: "); put(esp_app_get_description()->version); put("\r\n");
+    show_filter();
+    put("IPv4 address: "); put(rf_network_get_ip(ip,sizeof(ip))==ESP_OK?ip:"none"); put("\r\n");
     put("Wi-Fi credentials: "); put(s.wifi?"provisioned\r\n":"missing\r\n");
     put("Device password: "); put(s.device_password?"provisioned\r\n":"missing\r\n");
     put("TLS certificate and key: "); put(s.tls?"provisioned\r\n":"missing\r\n");
@@ -99,10 +123,12 @@ static void console_task(void *arg) {
         put("rf> ");
         if(!read_line(cmd,sizeof(cmd),true) || !cmd[0]) continue;
         if(!strcmp(cmd,"status")) show_status();
+        else if(!strcmp(cmd,"filter")) show_filter();
+        else if(!strncmp(cmd,"filter ",7)) select_port(cmd+7);
         else if(!strcmp(cmd,"set-wifi")) set_wifi();
         else if(!strcmp(cmd,"set-password")) set_password();
         else if(!strcmp(cmd,"set-tls")) set_tls();
-        else put("Commands: status, set-wifi, set-password, set-tls. Ctrl-C cancels.\r\n");
+        else put("Commands: status, filter [1-4], set-wifi, set-password, set-tls. Ctrl-C cancels.\r\n");
     }
 }
 esp_err_t rf_usb_console_start(void) {

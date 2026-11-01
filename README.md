@@ -4,6 +4,8 @@ ESP-IDF firmware for two HMC7992 SP4T RF switches controlling four filter paths,
 
 Development is in progress. Hardware and security validation required before deployment.
 
+To flash and test a board, follow [the bring-up guide](docs/BRINGUP.md).
+
 ## Build
 
 Use ESP-IDF **v6.1** with the ESP32-S3 toolchain. From an activated ESP-IDF shell:
