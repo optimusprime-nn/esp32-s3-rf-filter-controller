@@ -1,0 +1,8 @@
+# ESP32-S3-WROOM-1-N16R8 (16 MB). Offsets are fixed so that later firmware can rely on them.
+# Name,    Type, SubType,  Offset,   Size,     Flags
+nvs,       data, nvs,      0x9000,   0x40000,
+nvs_keys,  data, nvs_keys, 0x49000,  0x1000,   encrypted
+otadata,   data, ota,      0x4A000,  0x2000,
+phy_init,  data, phy,      0x4C000,  0x1000,
+ota_0,     app,  ota_0,    0x50000,  0x400000,
+ota_1,     app,  ota_1,    0x450000, 0x400000,

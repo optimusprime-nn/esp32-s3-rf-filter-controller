@@ -13,7 +13,7 @@ Network uses Wi-Fi credentials in NVS namespace `wifi` keys `ssid` and `password
 - RF source inhibit is deliberately not released.
 - No KiCad schematic/ERC.
 - The HTTPS diagnostic listener is **read-only and unauthenticated**; never transmit credentials to it. TLS keys and Wi-Fi credentials are in unencrypted NVS.
-- Build defaults remain 2 MB flash and the single-app partition table (1 MiB app, 24 KiB NVS) until the ESP32-S3 module is chosen. OTA and ACME need a larger layout.
+- The flash layout has two OTA slots, but no OTA update code or rollback exists yet. Firmware boots from `ota_0`.
 - Stored settings have no schema version; add one before the settings struct changes.
 - Static IPv4 is applied at startup only; no network rollback yet.
 - New integration commits require their own CI validation before merge.

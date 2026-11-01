@@ -1,4 +1,8 @@
 # Hardware baseline (provisional)
+MCU: ESP32-S3 N16R8, 16 MB quad flash and 8 MB octal PSRAM. Octal PSRAM occupies GPIO33 to GPIO37, so those pins are not available for control signals.
+
+Flash layout (`partitions.csv`): 256 KiB NVS, an NVS key partition reserved for encryption, two 4 MiB OTA app slots, and about 7.7 MiB left unallocated for later use.
+
 Two HMC7992 SP4T modules: common RFC of switch A is RF input; common RFC of switch B is RF output. RF1..RF4 connect through respective external filters. Both modules share A/B control bits, 3.3 V supply, and ground.
 
 | Port | A | B |
