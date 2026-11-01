@@ -14,10 +14,10 @@ From an activated ESP-IDF shell. The full erase is required on any board with ol
 ```sh
 idf.py set-target esp32s3
 idf.py build
-idf.py -p COM7 erase-flash flash monitor
+idf.py -p <uart-port> erase-flash flash monitor
 ```
 
-Replace `COM7` with your board's UART port.
+Replace `<uart-port>` with your board's UART port. Check it first: on a computer with other boards attached, the wrong port erases the wrong board.
 
 **Pass:** the log shows 16 MB flash and 8 MB PSRAM found, `Selected filter 1`, and `USB provisioning console ready`, with no boot loop. Without Wi-Fi credentials it also logs that the network is disabled, which is expected.
 
@@ -25,7 +25,7 @@ Replace `COM7` with your board's UART port.
 Connect to the native USB port. Any serial terminal works; the IDF Python environment includes one:
 
 ```sh
-python -m serial.tools.miniterm COM8 115200
+python -m serial.tools.miniterm <usb-port> 115200
 ```
 
 Press Enter for the `rf>` prompt, then run `status`.
