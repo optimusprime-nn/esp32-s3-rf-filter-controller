@@ -1,10 +1,7 @@
 # ESP-IDF 6.1 migration
 
-This migration is stacked on PR #3 (`feature/network-time-acme-settings`) at
-`19ba93882ada1ed163b150494b8269ab07fdecfa`, which includes PRs #1 and #2.
-Those draft branches retain their original history; review this migration after
-the preceding PRs, or include it when consolidating the stack. No PR is merged
-by this change.
+The stacked PRs #1 to #5 were consolidated into `main` with RF inhibit still
+asserted in firmware and hardware validation still outstanding.
 
 ## Build and dependencies
 
