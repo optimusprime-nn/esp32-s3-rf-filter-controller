@@ -3,19 +3,31 @@
 #include "esp_netif.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "management_settings.h"
 #include "lwip/ip4_addr.h"
 #include <string.h>
 static const char *TAG="network";
+#define RECONNECT_MIN_MS 1000
+#define RECONNECT_MAX_MS 60000
 static esp_netif_t *sta_netif;
+static esp_timer_handle_t reconnect_timer;
+static uint32_t reconnect_ms=RECONNECT_MIN_MS;
+static void reconnect_expired(void *arg) {
+    esp_wifi_connect();
+}
 static void wifi_events(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if(base==WIFI_EVENT && id==WIFI_EVENT_STA_START) esp_wifi_connect();
     if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG,"STA disconnected; reconnecting");
-        esp_wifi_connect();
+        ESP_LOGW(TAG,"STA disconnected; reconnecting in %lu ms",(unsigned long)reconnect_ms);
+        esp_timer_start_once(reconnect_timer,reconnect_ms*1000ULL);
+        reconnect_ms=reconnect_ms*2>RECONNECT_MAX_MS?RECONNECT_MAX_MS:reconnect_ms*2;
     }
-    if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) ESP_LOGI(TAG,"Station received IPv4 address");
+    if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
+        reconnect_ms=RECONNECT_MIN_MS;
+        ESP_LOGI(TAG,"Station received IPv4 address");
+    }
 }
 static esp_err_t static_address(const rf_management_settings_t *s) {
     if(s->dhcp) return ESP_OK;
@@ -41,6 +53,10 @@ esp_err_t network_start(const rf_management_settings_t *settings) {
     ESP_ERROR_CHECK(static_address(settings));
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
+    /* Credentials live in the "wifi" namespace; do not let the driver keep a second copy in flash. */
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    const esp_timer_create_args_t timer={.callback=reconnect_expired,.name="wifi_reconnect"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer,&reconnect_timer));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_events,NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_events,NULL));
     char ssid[33]={0},password[65]={0};
@@ -59,5 +75,6 @@ esp_err_t network_start(const rf_management_settings_t *settings) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));
     memset(password,0,sizeof(password));
+    memset(&sta,0,sizeof(sta));
     return esp_wifi_start();
 }

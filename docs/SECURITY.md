@@ -1,5 +1,5 @@
 # Security gate
-The network.c AP is intentionally **open and unsafe** and is a bench-only scaffold. Do not connect the RF source or Radxa reset driver while this firmware is deployed to an untrusted network.
+The firmware runs Wi-Fi station only; there is no AP, open or otherwise. A recovery AP is not implemented and must not ship open. Do not connect the RF source or Radxa reset driver while this firmware is deployed to an untrusted network.
 
 Before enabling remote write endpoints:
 - Provision a unique device password through an authenticated local setup channel.

@@ -37,12 +37,14 @@ void app_main(void) {
         .mode=GPIO_MODE_OUTPUT,.pull_up_en=GPIO_PULLUP_DISABLE,
         .pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
     ESP_ERROR_CHECK(gpio_config(&cfg));
-    ESP_ERROR_CHECK(config_store_init());
+    /* A panic here would reboot-loop and release the RF inhibit output on every reset. */
+    esp_err_t e=config_store_init();
+    if(e!=ESP_OK) { ESP_LOGE(TAG,"NVS unavailable, staying offline: %s",esp_err_to_name(e)); return; }
     uint8_t port=1;
     if(config_store_load_port(&port)!=ESP_OK) port=1;
     ESP_ERROR_CHECK(select_filter(port));
     rf_management_settings_t settings;
-    esp_err_t e=rf_settings_load(&settings);
+    e=rf_settings_load(&settings);
     if(e!=ESP_OK) { ESP_LOGE(TAG,"Invalid stored network settings; network disabled"); return; }
     e=network_start(&settings);
     if(e!=ESP_OK) { ESP_LOGW(TAG,"Network unavailable: %s",esp_err_to_name(e)); return; }

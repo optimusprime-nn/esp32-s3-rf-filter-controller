@@ -17,7 +17,11 @@ static bool valid_dns(const char *s, size_t max, bool dots) {
 }
 static bool valid_ip(const char *str) {
     ip4_addr_t addr;
-    return str && strnlen(str,16)<16 && ip4addr_aton(str,&addr);
+    if(!str || strnlen(str,16)>=16 || strspn(str,"0123456789.")!=strlen(str)) return false;
+    /* ip4addr_aton also accepts short forms such as "10" or "10.1". */
+    int dots=0;
+    for(const char *p=str;*p;p++) dots+=*p=='.';
+    return dots==3 && ip4addr_aton(str,&addr);
 }
 static bool valid_static(const rf_management_settings_t *s) {
     if(!valid_ip(s->ipv4)||!valid_ip(s->netmask)||!valid_ip(s->gateway)||!valid_ip(s->dns)) return false;

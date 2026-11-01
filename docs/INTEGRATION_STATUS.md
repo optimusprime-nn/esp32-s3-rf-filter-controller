@@ -1,6 +1,8 @@
 # Integrated firmware status
 
-Boot flow: safe GPIO setup and asserted RF inhibit -> NVS init -> saved filter port -> load validated management settings -> Wi-Fi STA -> configured SNTP -> read-only HTTP diagnostics.
+Boot flow: safe GPIO setup and asserted RF inhibit -> NVS init -> saved filter port -> load validated management settings -> Wi-Fi STA -> configured SNTP -> read-only HTTPS diagnostics, started only when a certificate and key are provisioned in NVS namespace `tls`.
+
+If NVS cannot initialise the device stays offline with RF inhibit asserted; it does not panic, because every reset would release the inhibit output. Wi-Fi reconnects back off from 1 s to 60 s.
 
 Network uses Wi-Fi credentials in NVS namespace `wifi` keys `ssid` and `password`. These credentials must be provisioned through a future secure physical/USB flow; no open AP or default passwords are enabled. Without credentials the device continues RF-inhibited and offline. The configuration schema contains DHCP/static IPv4, gateway, netmask, DNS, hostname, FQDN, NTP server and ACME zone/enable flag.
 
@@ -10,7 +12,9 @@ Network uses Wi-Fi credentials in NVS namespace `wifi` keys `ssid` and `password
 - No validated reset driver; Radxa reset pin remains inactive.
 - RF source inhibit is deliberately not released.
 - No KiCad schematic/ERC.
-- Current HTTP diagnostic listener is **unencrypted and read-only**; never transmit credentials to it.
+- The HTTPS diagnostic listener is **read-only and unauthenticated**; never transmit credentials to it. TLS keys and Wi-Fi credentials are in unencrypted NVS.
+- Build defaults remain 2 MB flash and the single-app partition table (1 MiB app, 24 KiB NVS) until the ESP32-S3 module is chosen. OTA and ACME need a larger layout.
+- Stored settings have no schema version; add one before the settings struct changes.
 - Static IPv4 is applied at startup only; no network rollback yet.
 - New integration commits require their own CI validation before merge.
 
