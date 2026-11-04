@@ -1,0 +1,64 @@
+menu "RF controller fan"
+
+    config RF_FAN_PWM_GPIO
+        int "Fan PWM output GPIO"
+        range 0 48
+        default 8
+        help
+            Drives the fan's PWM input through a transistor. Avoid strapping pins,
+            USB (GPIO19/20) and octal PSRAM (GPIO33 to GPIO37).
+
+    config RF_FAN_PWM_INVERTED
+        bool "Invert PWM output"
+        default y
+        help
+            Enable for the usual open-collector driver, where a high GPIO pulls the
+            fan's PWM line low. With a pull-down on the transistor's base or gate,
+            an undriven GPIO then leaves the fan at full speed.
+
+    config RF_FAN_PWM_FREQ_HZ
+        int "PWM frequency (Hz)"
+        range 1000 40000
+        default 25000
+        help
+            4-wire PC fans expect 21 to 28 kHz.
+
+    config RF_FAN_TACH_GPIO
+        int "Fan tachometer input GPIO (-1 for none)"
+        range -1 48
+        default 9
+
+    config RF_FAN_PULSES_PER_REV
+        int "Tachometer pulses per revolution"
+        range 1 8
+        default 2
+
+    config RF_FAN_DEFAULT_PERCENT
+        int "Fan speed before one is saved (percent)"
+        range 0 100
+        default 100
+
+endmenu
+
+menu "RF controller temperature sensors"
+
+    config RF_I2C_SDA_GPIO
+        int "I2C SDA GPIO"
+        range 0 48
+        default 10
+
+    config RF_I2C_SCL_GPIO
+        int "I2C SCL GPIO"
+        range 0 48
+        default 11
+
+    config RF_TEMP_I2C_ADDRESSES
+        string "LM75-family sensor addresses"
+        default "0x48"
+        help
+            Comma-separated 7-bit addresses of LM75, TMP75, TMP102 or PCT2075
+            sensors, up to eight. Leave empty for none. Only list addresses that
+            hold one of these sensors: another chip at the same address would be
+            read as a temperature.
+
+endmenu

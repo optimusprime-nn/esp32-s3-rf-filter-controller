@@ -12,15 +12,21 @@ The console runs on the ESP32-S3 native USB port (USB Serial/JTAG, GPIO19 and GP
 `set-password` stores a salted PBKDF2-HMAC-SHA256 record (20,000 iterations) in namespace `auth` key `password`. `set-tls` checks PEM markers only; a bad certificate or mismatched key shows up as HTTPS failing to start at the next boot.
 
 ## Filter control
-Filters are selected with `filter 1` to `filter 4` on the USB console, or over HTTPS after login. The selection is saved and restored at boot. HTTPS allows one session at a time, which ends after 15 minutes idle or when the device password changes. After three failed logins, each further failure locks login out, from 1 second doubling to 5 minutes. State-changing requests need the session cookie and an `X-RF-Request` header. See [BRINGUP.md](BRINGUP.md) for the first flash.
+Filters are selected with `filter 1` to `filter 4` on the USB console, or through the API after login. The selection is saved and restored at boot. See [BRINGUP.md](BRINGUP.md) for the first flash.
+
+## Management API and web page
+The HTTPS API is specified in [API.md](API.md), and the web page uses nothing else. It covers status, health, Prometheus metrics, filter, fan, temperature, network settings, Wi-Fi, TLS, password change and reboot. Everything except `/`, health, metrics and login needs a session. The dashboard refreshes every second.
+
+## Fan and temperature
+The fan runs from 25 kHz PWM on GPIO8, with its tachometer on GPIO9. The speed is saved and defaults to 100%. Temperatures come from the ESP32-S3's internal sensor and from LM75-family I2C sensors on GPIO10 (SDA) and GPIO11 (SCL) at the addresses set in `menuconfig`, read every 2 seconds. Pins, polarity and addresses are set under "RF controller fan" and "RF controller temperature sensors" in `menuconfig`. The fan isn't driven by temperature: its speed is set by hand.
 
 ## Explicit nonfunctional features
-- No write-capable settings form, and no USB command for network settings.
+- No USB command for network settings; use the API.
 - No ACME transaction engine or Cloudflare API token storage ported yet; reference implementation is substantially larger and needs heap/flash review.
 - No validated reset driver; Radxa reset pin remains inactive.
 - RF source inhibit is deliberately not released.
 - No KiCad schematic/ERC.
-- `/` and `/api/status` remain readable without login. TLS keys and Wi-Fi credentials are in unencrypted NVS.
+- TLS keys and Wi-Fi credentials are in unencrypted NVS.
 - The flash layout has two OTA slots, but no OTA update code or rollback exists yet. Firmware boots from `ota_0`.
 - Stored settings have no schema version; add one before the settings struct changes.
 - Static IPv4 is applied at startup only; no network rollback yet.
