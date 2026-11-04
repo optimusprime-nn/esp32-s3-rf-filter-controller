@@ -7,6 +7,7 @@
 #include "management_settings.h"
 #include "time_service.h"
 #include "filter.h"
+#include "ownership.h"
 #include "fan.h"
 #include "temp_sensor.h"
 #define RADXA_RESET_GPIO GPIO_NUM_6
@@ -29,6 +30,9 @@ void app_main(void) {
     /* A panic here would reboot-loop and release the RF inhibit output on every reset. */
     esp_err_t e=config_store_init();
     if(e!=ESP_OK) { ESP_LOGE(TAG,"NVS unavailable, staying offline: %s",esp_err_to_name(e)); return; }
+    /* Prints the enrollment code on an unclaimed board, for the setup tool to read. */
+    e=rf_ownership_init();
+    if(e!=ESP_OK) ESP_LOGE(TAG,"Management ownership state unreadable: %s",esp_err_to_name(e));
     uint8_t port=1;
     if(config_store_load_port(&port)!=ESP_OK) port=1;
     ESP_ERROR_CHECK(rf_filter_start(port));
@@ -46,7 +50,7 @@ void app_main(void) {
     e=network_start(&settings);
     if(e!=ESP_OK) { ESP_LOGW(TAG,"Network unavailable: %s",esp_err_to_name(e)); return; }
     ESP_ERROR_CHECK(rf_time_service_start(settings.ntp_server));
-    /* State-changing endpoints require a login; see web.c. */
+    /* Enrollment only until claimed, then mTLS; see web.c. */
     e=web_start();
-    if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable (TLS provisioning required): %s",esp_err_to_name(e));
+    if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable: %s",esp_err_to_name(e));
 }
