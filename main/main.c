@@ -7,6 +7,8 @@
 #include "management_settings.h"
 #include "time_service.h"
 #include "filter.h"
+#include "fan.h"
+#include "temp_sensor.h"
 #define RADXA_RESET_GPIO GPIO_NUM_6
 extern esp_err_t config_store_init(void);
 extern esp_err_t config_store_load_port(uint8_t *port);
@@ -30,6 +32,11 @@ void app_main(void) {
     uint8_t port=1;
     if(config_store_load_port(&port)!=ESP_OK) port=1;
     ESP_ERROR_CHECK(rf_filter_start(port));
+    /* Not fatal: with the recommended driver an unconfigured PWM pin leaves the fan at full speed. */
+    e=rf_fan_start();
+    if(e!=ESP_OK) ESP_LOGE(TAG,"Fan control unavailable: %s",esp_err_to_name(e));
+    e=rf_temp_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"Temperature sensors unavailable: %s",esp_err_to_name(e));
     /* Before anything below can return early: an unprovisioned device must still be reachable over USB. */
     e=rf_usb_console_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"USB provisioning console unavailable: %s",esp_err_to_name(e));

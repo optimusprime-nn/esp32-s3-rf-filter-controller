@@ -1,7 +1,9 @@
 #include "console_line.h"
+#include "fan.h"
 #include "filter.h"
 #include "provisioning.h"
 #include "session.h"
+#include "temp_sensor.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -106,12 +108,40 @@ static void select_port(const char *arg) {
     if(e==ESP_OK) show_filter();
     else report(e);
 }
+static void show_fan(void) {
+    char line[48];
+    int32_t rpm=rf_fan_rpm_now();
+    if(rpm<0) snprintf(line,sizeof(line),"Fan: %u%%\r\n",(unsigned)rf_fan_percent());
+    else snprintf(line,sizeof(line),"Fan: %u%%, %ld RPM\r\n",(unsigned)rf_fan_percent(),(long)rpm);
+    put(line);
+}
+static void set_fan(const char *arg) {
+    char *end;
+    long p=strtol(arg,&end,10);
+    if(!*arg || *end || p<0 || p>100) { put("ERROR: fan speed must be 0 to 100\r\n"); return; }
+    esp_err_t e=rf_fan_set((uint8_t)p);
+    if(e==ESP_OK) show_fan();
+    else report(e);
+}
+static void show_temps(void) {
+    rf_temp_reading_t r[RF_TEMP_MAX_SENSORS];
+    size_t n=rf_temp_snapshot(r,RF_TEMP_MAX_SENSORS);
+    char line[64];
+    if(!n) put("Temperature: no sensors\r\n");
+    for(size_t i=0;i<n;i++) {
+        if(r[i].ok) snprintf(line,sizeof(line),"Temperature %s: %s%ld.%01ld C\r\n",r[i].id,r[i].millicelsius<0?"-":"",labs(r[i].millicelsius)/1000,labs(r[i].millicelsius)%1000/100);
+        else snprintf(line,sizeof(line),"Temperature %s: not responding\r\n",r[i].id);
+        put(line);
+    }
+}
 static void show_status(void) {
     rf_provision_status_t s;
     char ip[16];
     rf_provision_get_status(&s);
     put("Firmware: "); put(esp_app_get_description()->version); put("\r\n");
     show_filter();
+    show_fan();
+    show_temps();
     put("IPv4 address: "); put(rf_network_get_ip(ip,sizeof(ip))==ESP_OK?ip:"none"); put("\r\n");
     put("Wi-Fi credentials: "); put(s.wifi?"provisioned\r\n":"missing\r\n");
     put("Device password: "); put(s.device_password?"provisioned\r\n":"missing\r\n");
@@ -125,10 +155,13 @@ static void console_task(void *arg) {
         if(!strcmp(cmd,"status")) show_status();
         else if(!strcmp(cmd,"filter")) show_filter();
         else if(!strncmp(cmd,"filter ",7)) select_port(cmd+7);
+        else if(!strcmp(cmd,"fan")) show_fan();
+        else if(!strcmp(cmd,"temps")) show_temps();
+        else if(!strncmp(cmd,"fan ",4)) set_fan(cmd+4);
         else if(!strcmp(cmd,"set-wifi")) set_wifi();
         else if(!strcmp(cmd,"set-password")) set_password();
         else if(!strcmp(cmd,"set-tls")) set_tls();
-        else put("Commands: status, filter [1-4], set-wifi, set-password, set-tls. Ctrl-C cancels.\r\n");
+        else put("Commands: status, filter [1-4], fan [0-100], temps, set-wifi, set-password, set-tls. Ctrl-C cancels.\r\n");
     }
 }
 esp_err_t rf_usb_console_start(void) {
