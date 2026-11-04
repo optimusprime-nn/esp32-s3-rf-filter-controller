@@ -1,17 +1,16 @@
-/* Host tests for provisioning. The KDF is faked: this checks record handling, not PBKDF2 itself. */
-#define _GNU_SOURCE
+/* Host tests for Wi-Fi and TLS provisioning and the console line editor. */
 #include "provisioning.h"
 #include "console_line.h"
-#include "esp_random.h"
 #include "nvs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define SLOTS 8
+#define NS_WIFI 0
+#define NS_TLS 1
 static struct { char name[32]; unsigned char *data; size_t len; } slots[SLOTS];
-static const char *namespaces[]={"wifi","auth","tls"};
-static bool ns_exists[3];
-static unsigned salt_counter;
+static const char *namespaces[]={"wifi","tls"};
+static bool ns_exists[2];
 static int slot(nvs_handle_t h, const char *key, bool create) {
     char name[32];
     snprintf(name,sizeof(name),"%u/%s",(unsigned)h,key);
@@ -20,7 +19,7 @@ static int slot(nvs_handle_t h, const char *key, bool create) {
     return -1;
 }
 esp_err_t nvs_open(const char *ns, nvs_open_mode_t mode, nvs_handle_t *h) {
-    for(unsigned i=0;i<3;i++) if(!strcmp(ns,namespaces[i])) {
+    for(unsigned i=0;i<2;i++) if(!strcmp(ns,namespaces[i])) {
         if(mode==NVS_READWRITE) ns_exists[i]=true;
         if(!ns_exists[i]) return ESP_ERR_NVS_NOT_FOUND;
         *h=i; return ESP_OK;
@@ -44,14 +43,14 @@ esp_err_t nvs_set_blob(nvs_handle_t h, const char *key, const void *in, size_t l
     return ESP_OK;
 }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *in) { return nvs_set_blob(h,key,in,strlen(in)+1); }
-esp_err_t nvs_commit(nvs_handle_t h) { return ESP_OK; }
-void nvs_close(nvs_handle_t h) {}
-void esp_fill_random(void *buf, size_t len) { memset(buf,(int)++salt_counter,len); }
-esp_err_t rf_password_kdf(const char *password, const uint8_t *salt, size_t salt_len, uint32_t iterations, uint8_t *out, size_t out_len) {
-    size_t n=strlen(password);
-    for(size_t i=0;i<out_len;i++) out[i]=(uint8_t)(password[i%n]^salt[i%salt_len]^iterations);
+esp_err_t nvs_erase_all(nvs_handle_t h) {
+    char prefix[8];
+    snprintf(prefix,sizeof(prefix),"%u/",(unsigned)h);
+    for(int i=0;i<SLOTS;i++) if(!strncmp(slots[i].name,prefix,strlen(prefix))) { free(slots[i].data); slots[i].data=NULL; slots[i].len=0; slots[i].name[0]='\0'; }
     return ESP_OK;
 }
+esp_err_t nvs_commit(nvs_handle_t h) { return ESP_OK; }
+void nvs_close(nvs_handle_t h) {}
 static int failures;
 #define CHECK(x) do { if(!(x)) { printf("FAIL %s:%d: %s\n",__FILE__,__LINE__,#x); failures++; } } while(0)
 static const char *stored(unsigned ns, const char *key) {
@@ -71,33 +70,24 @@ static void test_wifi(void) {
     longer[64]='a'; longer[65]='\0';
     CHECK(rf_provision_set_wifi("net",longer)==ESP_ERR_INVALID_ARG);
     CHECK(rf_provision_set_wifi("my network","pass word1")==ESP_OK);
-    CHECK(!strcmp(stored(0,"ssid"),"my network") && !strcmp(stored(0,"password"),"pass word1"));
-}
-static void test_password(void) {
-    bool match=true;
-    CHECK(rf_provision_verify_device_password("correct horse",&match)==ESP_ERR_NVS_NOT_FOUND && !match);
-    CHECK(rf_provision_set_device_password("too short")==ESP_ERR_INVALID_ARG);
-    CHECK(rf_provision_set_device_password("correct horse")==ESP_OK);
-    CHECK(!memmem(slots[slot(1,"password",false)].data,slots[slot(1,"password",false)].len,"correct horse",13));
-    CHECK(rf_provision_verify_device_password("correct horse",&match)==ESP_OK && match);
-    CHECK(rf_provision_verify_device_password("correct horsf",&match)==ESP_OK && !match);
-    unsigned char before[56];
-    memcpy(before,stored(1,"password"),sizeof(before));
-    CHECK(rf_provision_set_device_password("correct horse")==ESP_OK);
-    CHECK(memcmp(before,stored(1,"password"),sizeof(before))!=0);
-    slots[slot(1,"password",false)].len=4;
-    CHECK(rf_provision_verify_device_password("correct horse",&match)==ESP_ERR_INVALID_STATE && !match);
-    CHECK(rf_provision_set_device_password("correct horse")==ESP_OK);
+    CHECK(!strcmp(stored(NS_WIFI,"ssid"),"my network") && !strcmp(stored(NS_WIFI,"password"),"pass word1"));
 }
 static void test_tls(void) {
     const char *cert="-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
     const char *key="-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----\n";
+    rf_provision_status_t s;
     CHECK(rf_provision_set_tls("not pem at all, not even close to it",key)==ESP_ERR_INVALID_ARG);
     CHECK(rf_provision_set_tls(cert,"-----BEGIN PRIVATE KEY-----\ntruncated, no end marker")==ESP_ERR_INVALID_ARG);
-    CHECK(stored(2,"cert")==NULL);
+    CHECK(stored(NS_TLS,"cert")==NULL);
     CHECK(rf_provision_set_tls(cert,key)==ESP_OK);
     size_t n=0;
-    CHECK(nvs_get_blob(2,"cert",NULL,&n)==ESP_OK && n==strlen(cert)+1 && stored(2,"cert")[n-1]=='\0');
+    CHECK(nvs_get_blob(NS_TLS,"cert",NULL,&n)==ESP_OK && n==strlen(cert)+1 && stored(NS_TLS,"cert")[n-1]=='\0');
+    rf_provision_get_status(&s);
+    CHECK(s.tls);
+    CHECK(rf_provision_clear_tls()==ESP_OK);
+    rf_provision_get_status(&s);
+    CHECK(!s.tls && stored(NS_TLS,"key")==NULL);
+    CHECK(rf_provision_set_tls(cert,key)==ESP_OK);
 }
 static rf_line_result_t feed(rf_line_t *l, const char *s) {
     rf_line_result_t r=RF_LINE_MORE;
@@ -125,13 +115,12 @@ static void test_line(void) {
 int main(void) {
     rf_provision_status_t s;
     rf_provision_get_status(&s);
-    CHECK(!s.wifi && !s.device_password && !s.tls);
+    CHECK(!s.wifi && !s.tls);
     test_wifi();
-    test_password();
     test_tls();
     test_line();
     rf_provision_get_status(&s);
-    CHECK(s.wifi && s.device_password && s.tls);
+    CHECK(s.wifi && s.tls);
     for(int i=0;i<SLOTS;i++) free(slots[i].data);
     if(failures) return 1;
     puts("provisioning host tests PASSED");

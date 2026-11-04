@@ -9,5 +9,6 @@ esp_err_t nvs_get_blob(nvs_handle_t h, const char *key, void *out, size_t *len);
 esp_err_t nvs_set_blob(nvs_handle_t h, const char *key, const void *in, size_t len);
 esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *out, size_t *len);
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *in);
+esp_err_t nvs_erase_all(nvs_handle_t h);
 esp_err_t nvs_commit(nvs_handle_t h);
 void nvs_close(nvs_handle_t h);

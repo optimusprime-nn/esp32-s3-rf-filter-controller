@@ -8,11 +8,11 @@ gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address
     -Imain -Itests/host/stubs tests/host/test_provisioning.c main/provisioning.c main/console_line.c -o "$out/test_provisioning"
 "$out/test_provisioning"
 gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
-    -Imain -Itests/host/stubs tests/host/test_session.c main/session.c -o "$out/test_session"
-"$out/test_session"
-gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
     -Imain tests/host/test_fan.c main/fan_math.c -o "$out/test_fan"
 "$out/test_fan"
 gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
     -Imain tests/host/test_temp.c main/temp_math.c -o "$out/test_temp"
 "$out/test_temp"
+gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
+    -Imain -Itests/host/stubs tests/host/test_der.c main/der_util.c -o "$out/test_der"
+"$out/test_der"

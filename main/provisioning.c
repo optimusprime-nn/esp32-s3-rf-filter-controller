@@ -1,14 +1,6 @@
 #include "provisioning.h"
-#include "console_line.h"
-#include "esp_random.h"
 #include "nvs.h"
 #include <string.h>
-#define RF_PBKDF2_ITERATIONS 20000
-#define RF_PASSWORD_RECORD_VERSION 1
-typedef struct {
-    uint32_t version, iterations;
-    uint8_t salt[16], hash[32];
-} rf_password_record_t;
 static bool printable(const char *s) {
     for(;*s;s++) if((unsigned char)*s<0x20 || *s==0x7f) return false;
     return true;
@@ -36,44 +28,6 @@ esp_err_t rf_provision_set_wifi(const char *ssid, const char *password) {
     nvs_close(h);
     return e;
 }
-esp_err_t rf_provision_set_device_password(const char *password) {
-    if(!password) return ESP_ERR_INVALID_ARG;
-    size_t n=strnlen(password,RF_DEVICE_PASSWORD_MAX+1);
-    if(n<RF_DEVICE_PASSWORD_MIN || n>RF_DEVICE_PASSWORD_MAX || !printable(password)) return ESP_ERR_INVALID_ARG;
-    rf_password_record_t rec={.version=RF_PASSWORD_RECORD_VERSION,.iterations=RF_PBKDF2_ITERATIONS};
-    esp_fill_random(rec.salt,sizeof(rec.salt));
-    esp_err_t e=rf_password_kdf(password,rec.salt,sizeof(rec.salt),rec.iterations,rec.hash,sizeof(rec.hash));
-    if(e!=ESP_OK) return e;
-    nvs_handle_t h;
-    e=nvs_open("auth",NVS_READWRITE,&h);
-    if(e!=ESP_OK) return e;
-    e=nvs_set_blob(h,"password",&rec,sizeof(rec));
-    if(e==ESP_OK) e=nvs_commit(h);
-    nvs_close(h);
-    return e;
-}
-esp_err_t rf_provision_verify_device_password(const char *password, bool *match) {
-    if(!password || !match) return ESP_ERR_INVALID_ARG;
-    *match=false;
-    nvs_handle_t h;
-    esp_err_t e=nvs_open("auth",NVS_READONLY,&h);
-    if(e!=ESP_OK) return e;
-    rf_password_record_t rec;
-    size_t n=sizeof(rec);
-    e=nvs_get_blob(h,"password",&rec,&n);
-    nvs_close(h);
-    if(e!=ESP_OK) return e;
-    if(n!=sizeof(rec) || rec.version!=RF_PASSWORD_RECORD_VERSION || !rec.iterations) return ESP_ERR_INVALID_STATE;
-    uint8_t hash[sizeof(rec.hash)];
-    e=rf_password_kdf(password,rec.salt,sizeof(rec.salt),rec.iterations,hash,sizeof(hash));
-    if(e==ESP_OK) {
-        uint8_t diff=0;
-        for(size_t i=0;i<sizeof(hash);i++) diff|=hash[i]^rec.hash[i];
-        *match=diff==0;
-    }
-    rf_secure_zero(hash,sizeof(hash));
-    return e;
-}
 static bool pem_valid(const char *pem) {
     if(!pem) return false;
     size_t n=strnlen(pem,RF_PEM_MAX+1);
@@ -92,6 +46,15 @@ esp_err_t rf_provision_set_tls(const char *cert, const char *key) {
     nvs_close(h);
     return e;
 }
+esp_err_t rf_provision_clear_tls(void) {
+    nvs_handle_t h;
+    esp_err_t e=nvs_open("tls",NVS_READWRITE,&h);
+    if(e!=ESP_OK) return e;
+    e=nvs_erase_all(h);
+    if(e==ESP_OK) e=nvs_commit(h);
+    nvs_close(h);
+    return e;
+}
 static bool str_present(nvs_handle_t h, const char *key) {
     size_t n=0;
     return nvs_get_str(h,key,NULL,&n)==ESP_OK && n>1;
@@ -105,10 +68,6 @@ void rf_provision_get_status(rf_provision_status_t *out) {
     *out=(rf_provision_status_t){0};
     if(nvs_open("wifi",NVS_READONLY,&h)==ESP_OK) {
         out->wifi=str_present(h,"ssid") && str_present(h,"password");
-        nvs_close(h);
-    }
-    if(nvs_open("auth",NVS_READONLY,&h)==ESP_OK) {
-        out->device_password=blob_present(h,"password");
         nvs_close(h);
     }
     if(nvs_open("tls",NVS_READONLY,&h)==ESP_OK) {

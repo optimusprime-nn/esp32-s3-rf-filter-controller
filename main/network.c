@@ -12,6 +12,7 @@ static const char *TAG="network";
 #define RECONNECT_MIN_MS 1000
 #define RECONNECT_MAX_MS 60000
 static esp_netif_t *sta_netif;
+static bool static_ipv4;
 static esp_timer_handle_t reconnect_timer;
 static uint32_t reconnect_ms=RECONNECT_MIN_MS;
 static void reconnect_expired(void *arg) {
@@ -26,10 +27,15 @@ static void wifi_events(void *arg, esp_event_base_t base, int32_t id, void *data
     }
     if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
         reconnect_ms=RECONNECT_MIN_MS;
-        ESP_LOGI(TAG,"Station received IPv4 address");
+        const ip_event_got_ip_t *got=data;
+        char ip[16];
+        esp_ip4addr_ntoa(&got->ip_info.ip,ip,sizeof(ip));
+        /* Same wording as esp32p4_nts_time_server; its setup tool reads this line. */
+        ESP_LOGI(TAG,"%s IPv4 acquired: %s",static_ipv4?"Static":"DHCP",ip);
     }
 }
 static esp_err_t static_address(const rf_management_settings_t *s) {
+    static_ipv4=!s->dhcp;
     if(s->dhcp) return ESP_OK;
     esp_netif_ip_info_t ip={0};
     ip4addr_aton(s->ipv4,(ip4_addr_t*)&ip.ip);

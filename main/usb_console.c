@@ -2,7 +2,8 @@
 #include "fan.h"
 #include "filter.h"
 #include "provisioning.h"
-#include "session.h"
+#include "ownership.h"
+#include "bootstrap_tls.h"
 #include "temp_sensor.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
@@ -47,22 +48,6 @@ static void set_wifi(void) {
     put("Password (not echoed): ");
     if(read_line(password,sizeof(password),false)) report(rf_provision_set_wifi(ssid,password));
     rf_secure_zero(password,sizeof(password));
-}
-static void set_password(void) {
-    char first[RF_DEVICE_PASSWORD_MAX+1],second[RF_DEVICE_PASSWORD_MAX+1];
-    put("New device password, 12 to 64 characters (not echoed): ");
-    bool ok=read_line(first,sizeof(first),false);
-    if(ok) { put("Repeat: "); ok=read_line(second,sizeof(second),false); }
-    if(ok) {
-        if(strcmp(first,second)) put("ERROR: passwords differ\r\n");
-        else {
-            esp_err_t e=rf_provision_set_device_password(first);
-            if(e==ESP_OK) rf_session_destroy();
-            report(e);
-        }
-    }
-    rf_secure_zero(first,sizeof(first));
-    rf_secure_zero(second,sizeof(second));
 }
 /* Reads PEM lines until the END marker, normalising line endings to LF. */
 static bool read_pem(char *out, size_t cap, bool echo) {
@@ -134,6 +119,13 @@ static void show_temps(void) {
         put(line);
     }
 }
+static void show_enrollment(void) {
+    char hex[65];
+    if(rf_ownership_claimed()) { put("Already claimed. Management needs a client certificate from your management CA.\r\n"); return; }
+    put("One-time management enrollment code: "); put(rf_ownership_code()); put("\r\n");
+    if(rf_bootstrap_tls_sha256(hex)==ESP_OK) { put("Bootstrap certificate SHA-256: "); put(hex); put("\r\n"); }
+    put("A certificate stored with set-tls is used instead once one is stored.\r\n");
+}
 static void show_status(void) {
     rf_provision_status_t s;
     char ip[16];
@@ -144,7 +136,7 @@ static void show_status(void) {
     show_temps();
     put("IPv4 address: "); put(rf_network_get_ip(ip,sizeof(ip))==ESP_OK?ip:"none"); put("\r\n");
     put("Wi-Fi credentials: "); put(s.wifi?"provisioned\r\n":"missing\r\n");
-    put("Device password: "); put(s.device_password?"provisioned\r\n":"missing\r\n");
+    put("Management: "); put(rf_ownership_claimed()?"claimed (mTLS)\r\n":"unclaimed; run enrollment\r\n");
     put("TLS certificate and key: "); put(s.tls?"provisioned\r\n":"missing\r\n");
 }
 static void console_task(void *arg) {
@@ -159,9 +151,9 @@ static void console_task(void *arg) {
         else if(!strcmp(cmd,"temps")) show_temps();
         else if(!strncmp(cmd,"fan ",4)) set_fan(cmd+4);
         else if(!strcmp(cmd,"set-wifi")) set_wifi();
-        else if(!strcmp(cmd,"set-password")) set_password();
+        else if(!strcmp(cmd,"enrollment")) show_enrollment();
         else if(!strcmp(cmd,"set-tls")) set_tls();
-        else put("Commands: status, filter [1-4], fan [0-100], temps, set-wifi, set-password, set-tls. Ctrl-C cancels.\r\n");
+        else put("Commands: status, filter [1-4], fan [0-100], temps, enrollment, set-wifi, set-tls. Ctrl-C cancels.\r\n");
     }
 }
 esp_err_t rf_usb_console_start(void) {

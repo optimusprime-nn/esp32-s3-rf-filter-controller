@@ -30,7 +30,7 @@ python -m serial.tools.miniterm <usb-port> 115200
 
 Press Enter for the `rf>` prompt, then run `status`.
 
-**Pass:** it shows the firmware version and filter 1, with Wi-Fi, device password and TLS all `missing`.
+**Pass:** it shows the firmware version, filter 1, Wi-Fi and TLS `missing`, and `Management: unclaimed`.
 
 ## 3. Check filter switching
 Measure GPIO4 (A) and GPIO5 (B) against ground. High is about 3.3 V.
@@ -44,40 +44,44 @@ Measure GPIO4 (A) and GPIO5 (B) against ground. High is about 3.3 V.
 
 Then run `filter 3`, press reset, and run `filter`. **Pass:** it still shows 3 and the pins match the table.
 
-## 4. Provision
-```text
-set-wifi
-set-password
-```
+## 4. Connect to Wi-Fi
+Run `set-wifi`. The network must be WPA2 on 2.4 GHz. Press reset, then run `status` and note the IPv4 address. The serial log also shows `DHCP IPv4 acquired: <address>`.
 
-The device password must be 12 to 64 characters. The Wi-Fi network must be WPA2 on 2.4 GHz. Press reset, then run `status` and note the IPv4 address.
+## 5. Claim the controller
+You need a management CA and an admin client certificate. Use the files the esp32p4_nts_time_server setup tool made, if you already have them, or make them as in [API.md](API.md#making-a-management-ca-by-hand).
 
-Create a certificate for that address on your PC, replacing the IP:
+1. Run `enrollment` on the USB console and note the code and the bootstrap certificate fingerprint.
+2. Check the controller is serving that certificate. The fingerprint must match, ignoring colons and case:
 
-```sh
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout rf-key.pem -out rf-cert.pem -days 825 -subj "/CN=rf-controller" -addext "subjectAltName=IP:192.168.1.50"
-```
+   ```sh
+   openssl s_client -connect <device-ip>:443 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
+   ```
 
-Run `set-tls`, paste `rf-cert.pem`, then paste `rf-key.pem` when asked. Delete `rf-key.pem` from the PC afterwards if you don't need it, then press reset.
+3. Open `https://<device-ip>/`. **Pass:** the enrollment information page. Nothing else answers: `curl -sk https://<device-ip>/api/v1/status` gives `404`.
+4. Claim it, with the code from step 1:
 
-**Pass:** `status` shows everything provisioned, and the log has no `HTTPS management disabled` line.
+   ```sh
+   curl -sk -X PUT -H 'Content-Type: application/x-pem-file' -H 'X-Provisioning-Code: <code>' --data-binary @management-ca.crt.pem https://<device-ip>/api/v1/provisioning/claim
+   ```
 
-## 5. Test HTTPS
-Open `https://<device-ip>/` and accept the self-signed certificate warning. The page shows only a login form until you log in. Then check:
+**Pass:** `{"claimed":true,...}`, the controller reboots by itself, and the log shows `Management ownership is provisioned` and `mTLS management console active`.
 
+Also check the lockout once, before claiming: five wrong codes give `429 Enrollment locked until reboot`, and a reset prints a new code.
+
+## 6. Test HTTPS
 | Action | Expected |
 |---|---|
-| `curl -sk https://<device-ip>/api/v1/status` without logging in | `401 Login required` |
-| `curl -sk https://<device-ip>/api/v1/health` | `{"status":"ok",...}` |
-| Log in with a wrong password | `Login failed` |
-| Fail six logins in a row, then retry at once | `Too many failed logins; try later` |
-| Log in correctly after waiting, press Filter 2 | Filter 2 highlighted, pins match the table |
+| `curl -sk https://<device-ip>/api/v1/status` with no client certificate | Connection refused during the TLS handshake |
+| The same with `--cert admin-client.crt.pem --key admin-client.key.pem` | Status JSON |
+| A client certificate from a different CA | Refused during the handshake |
+| Import `admin-client.p12` into your browser, open `https://<device-ip>/`, accept the certificate warning, choose the certificate | The dashboard |
+| Press Filter 2 | Filter 2 highlighted, pins match the table |
 | Watch the dashboard for 10 seconds | Uptime, fan RPM and temperatures update every second |
-| Log out | Login form again |
+| `curl` with the client certificate and `-X POST -H 'X-Confirm-Reboot: REBOOT' .../api/v1/system/reboot` | `202`, then the controller reboots and its bootstrap fingerprint is unchanged |
 
 [API.md](API.md) has `curl` examples for every call.
 
-## 6. Check the fan and temperature sensors
+## 7. Check the fan and temperature sensors
 Wire them as in [HARDWARE.md](HARDWARE.md#fan). With no fan connected, `status` shows `Fan: 100%, 0 RPM` and the log warns once that the fan reports 0 RPM.
 
 | Check | Expected |
@@ -89,4 +93,4 @@ Wire them as in [HARDWARE.md](HARDWARE.md#fan). With no fan connected, `status` 
 | Unplug the I2C sensor, then `temps` | `i2c-0x48: not responding`; reconnecting restores readings |
 
 ## Report back
-Send me anything that failed, with the serial log. Also note how long a login takes, since that's the first timing of the 20,000-iteration password hash, and the fan's RPM at 100% next to its rated speed. If prompts and log lines get mixed up on the USB console, tell me that too.
+Send me anything that failed, with the serial log. Also note how long the first boot takes to print the bootstrap fingerprint, since it generates a key, and the fan's RPM at 100% next to its rated speed. If prompts and log lines get mixed up on the USB console, tell me that too.

@@ -1,33 +1,37 @@
 # Integrated firmware status
 
-Boot flow: safe GPIO setup and asserted RF inhibit -> NVS init -> saved filter port -> load validated management settings -> Wi-Fi STA -> configured SNTP -> read-only HTTPS diagnostics, started only when a certificate and key are provisioned in NVS namespace `tls`.
+Boot flow: safe GPIO setup and asserted RF inhibit -> NVS init -> management ownership (prints the enrollment code until claimed) -> saved filter port -> fan and temperature sensors -> USB console -> load validated management settings -> Wi-Fi STA -> configured SNTP -> HTTPS: enrollment only until claimed, then the mTLS management API.
 
 If NVS cannot initialise the device stays offline with RF inhibit asserted; it does not panic, because every reset would release the inhibit output. Wi-Fi reconnects back off from 1 s to 60 s.
 
-Network uses Wi-Fi credentials in NVS namespace `wifi` keys `ssid` and `password`. These credentials are provisioned over the USB console; no open AP or default passwords are enabled. Without credentials the device continues RF-inhibited and offline. The configuration schema contains DHCP/static IPv4, gateway, netmask, DNS, hostname, FQDN, NTP server and ACME zone/enable flag.
+Network uses Wi-Fi credentials in NVS namespace `wifi` keys `ssid` and `password`. These credentials are provisioned over the USB console or, after the claim, the API; no open AP or default passwords are enabled. Without credentials the device continues RF-inhibited and offline. The configuration schema contains DHCP/static IPv4, gateway, netmask, DNS, hostname, FQDN, NTP server and ACME zone/enable flag.
 
-## USB provisioning
-The console runs on the ESP32-S3 native USB port (USB Serial/JTAG, GPIO19 and GPIO20) from boot, once NVS is up. Commands: `status`, `set-wifi`, `set-password`, `set-tls`; Ctrl-C cancels. Passwords and the private key are not echoed. Changes take effect at the next reset. The firmware does not reset itself, because a reset releases the RF inhibit output until `app_main` runs.
+## Management access
+Matches esp32p4_nts_time_server, so the same tools and management CA work for both. The controller makes a self-signed P-256 bootstrap certificate at first boot and prints its SHA-256 fingerprint. An unclaimed controller prints a one-time enrollment code and serves only `GET /` and `PUT /api/v1/provisioning/claim`. Once claimed with a management CA it requires mTLS for everything. Log lines use the reference's wording so its setup tool can read them. See [API.md](API.md) and [SECURITY.md](SECURITY.md).
 
-`set-password` stores a salted PBKDF2-HMAC-SHA256 record (20,000 iterations) in namespace `auth` key `password`. `set-tls` checks PEM markers only; a bad certificate or mismatched key shows up as HTTPS failing to start at the next boot.
+## USB console
+The console runs on the ESP32-S3 native USB port (USB Serial/JTAG, GPIO19 and GPIO20) from boot, once NVS is up. Commands: `status`, `filter`, `fan`, `temps`, `enrollment`, `set-wifi`, `set-tls`; Ctrl-C cancels. The Wi-Fi password and the private key are not echoed. Changes take effect at the next reset. The firmware does not reset itself from the console, because a reset releases the RF inhibit output until `app_main` runs.
+
+`set-tls` checks PEM markers only; a bad certificate or mismatched key makes HTTPS fail to start at the next boot. Until one is stored, HTTPS uses the bootstrap certificate.
 
 ## Filter control
-Filters are selected with `filter 1` to `filter 4` on the USB console, or through the API after login. The selection is saved and restored at boot. See [BRINGUP.md](BRINGUP.md) for the first flash.
+Filters are selected with `filter 1` to `filter 4` on the USB console, or through the API. The selection is saved and restored at boot. See [BRINGUP.md](BRINGUP.md) for the first flash.
 
 ## Management API and web page
-The HTTPS API is specified in [API.md](API.md), and the web page uses nothing else. It covers status, health, Prometheus metrics, filter, fan, temperature, network settings, Wi-Fi, TLS, password change and reboot. Everything except `/`, health, metrics and login needs a session. The dashboard refreshes every second.
+The HTTPS API is specified in [API.md](API.md), and the web page uses nothing else. It covers status, health, Prometheus metrics, filter, fan, temperature, network settings, Wi-Fi, TLS and reboot. The dashboard refreshes every second.
 
 ## Fan and temperature
 The fan runs from 25 kHz PWM on GPIO8, with its tachometer on GPIO9. The speed is saved and defaults to 100%. Temperatures come from the ESP32-S3's internal sensor and from LM75-family I2C sensors on GPIO10 (SDA) and GPIO11 (SCL) at the addresses set in `menuconfig`, read every 2 seconds. Pins, polarity and addresses are set under "RF controller fan" and "RF controller temperature sensors" in `menuconfig`. The fan isn't driven by temperature: its speed is set by hand.
 
 ## Explicit nonfunctional features
+- No support for this controller in the esp32p4_nts_time_server setup tool yet; claim it by hand as in BRINGUP.md.
+- No OTA updates (`/api/v1/ota/*`) or rollback yet. The flash layout has two OTA slots; firmware boots from `ota_0`.
+- No ACME transaction engine or Cloudflare token storage ported yet; HTTPS uses the bootstrap certificate or one stored by hand.
 - No USB command for network settings; use the API.
-- No ACME transaction engine or Cloudflare API token storage ported yet; reference implementation is substantially larger and needs heap/flash review.
 - No validated reset driver; Radxa reset pin remains inactive.
 - RF source inhibit is deliberately not released.
 - No KiCad schematic/ERC.
-- TLS keys and Wi-Fi credentials are in unencrypted NVS.
-- The flash layout has two OTA slots, but no OTA update code or rollback exists yet. Firmware boots from `ota_0`.
+- The bootstrap key, TLS keys and Wi-Fi credentials are in unencrypted NVS.
 - Stored settings have no schema version; add one before the settings struct changes.
 - Static IPv4 is applied at startup only; no network rollback yet.
 - New integration commits require their own CI validation before merge.

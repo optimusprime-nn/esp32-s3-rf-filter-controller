@@ -1,4 +1,6 @@
-/* HTTPS management API v1. docs/API.md is the specification; keep the two in step. */
+/* HTTPS management API v1. docs/API.md is the specification; keep the two in step.
+ * Access follows esp32p4_nts_time_server: an unclaimed board serves only enrollment;
+ * a claimed board requires a client certificate signed by the claimed CA (mTLS). */
 #include "esp_https_server.h"
 #include "esp_http_server.h"
 #include "esp_app_desc.h"
@@ -10,13 +12,17 @@
 #include "esp_timer.h"
 #include "nvs.h"
 #include "cJSON.h"
+#include "mbedtls/x509_crt.h"
+#include "psa/crypto.h"
 #include "sdkconfig.h"
+#include "bootstrap_tls.h"
 #include "console_line.h"
+#include "der_util.h"
 #include "fan.h"
 #include "filter.h"
 #include "management_settings.h"
+#include "ownership.h"
 #include "provisioning.h"
-#include "session.h"
 #include "temp_sensor.h"
 #include "time_service.h"
 #include <stdio.h>
@@ -26,11 +32,14 @@
 #include <time.h>
 static const char *TAG="web_tls";
 static httpd_handle_t server;
-static char *server_cert,*server_key;
+static char *server_cert,*server_key,*client_ca;
+static size_t server_key_len;
+static bool bootstrap_cert;
 static esp_timer_handle_t reboot_timer;
-#define SESSION_COOKIE "rf_session"
+static unsigned claim_failures;
 #define SMALL_BODY 512
 #define TLS_BODY 40000
+#define MAX_CLAIM_FAILURES 5
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern esp_err_t rf_network_get_ip(char *out, size_t len);
 static int64_t now_ms(void) {
@@ -61,18 +70,8 @@ static bool header_equals(httpd_req_t *req, const char *name, const char *value)
     char buf[32];
     return httpd_req_get_hdr_value_str(req,name,buf,sizeof(buf))==ESP_OK && !strcmp(buf,value);
 }
-static bool logged_in(httpd_req_t *req) {
-    char token[RF_SESSION_TOKEN_LEN+1];
-    size_t n=sizeof(token);
-    return httpd_req_get_cookie_val(req,SESSION_COOKIE,token,&n)==ESP_OK && rf_session_check(token,now_ms());
-}
-/* Returns the parsed body, or NULL after sending the error response. */
-static cJSON *read_json(httpd_req_t *req, size_t cap) {
-    char type[64];
-    if(httpd_req_get_hdr_value_str(req,"Content-Type",type,sizeof(type))!=ESP_OK || strncasecmp(type,"application/json",16)) {
-        send_error(req,"415 Unsupported Media Type","Content-Type must be application/json");
-        return NULL;
-    }
+/* Reads the whole body into a NUL-terminated heap buffer, or sends the error and returns NULL. */
+static char *read_body(httpd_req_t *req, size_t cap) {
     if(!req->content_len || req->content_len>cap) { send_error(req,"400 Bad Request","Body missing or too long"); return NULL; }
     size_t len=req->content_len,got=0;
     char *buf=malloc(len+1);
@@ -83,7 +82,21 @@ static cJSON *read_json(httpd_req_t *req, size_t cap) {
         if(r<=0) break;
         got+=(size_t)r;
     }
-    cJSON *j=got==len?cJSON_ParseWithLength(buf,len):NULL;
+    if(got!=len) { rf_secure_zero(buf,got); free(buf); send_error(req,"400 Bad Request","Body incomplete"); return NULL; }
+    buf[len]='\0';
+    return buf;
+}
+/* Returns the parsed body, or NULL after sending the error response. */
+static cJSON *read_json(httpd_req_t *req, size_t cap) {
+    char type[64];
+    if(httpd_req_get_hdr_value_str(req,"Content-Type",type,sizeof(type))!=ESP_OK || strncasecmp(type,"application/json",16)) {
+        send_error(req,"415 Unsupported Media Type","Content-Type must be application/json");
+        return NULL;
+    }
+    char *buf=read_body(req,cap);
+    if(!buf) return NULL;
+    size_t len=req->content_len;
+    cJSON *j=cJSON_ParseWithLength(buf,len);
     rf_secure_zero(buf,len);
     free(buf);
     if(!j) send_error(req,"400 Bad Request","Invalid JSON");
@@ -105,6 +118,15 @@ static bool json_int(const cJSON *obj, const char *key, int lo, int hi, int *out
     *out=(int)v->valuedouble;
     return true;
 }
+static void reboot_now(void *arg) {
+    esp_restart();
+}
+static esp_err_t schedule_reboot(void) {
+    const esp_timer_create_args_t args={.callback=reboot_now,.name="reboot"};
+    if(!reboot_timer && esp_timer_create(&args,&reboot_timer)!=ESP_OK) return ESP_FAIL;
+    esp_timer_stop(reboot_timer);
+    return esp_timer_start_once(reboot_timer,1000000);
+}
 static const char *reset_reason(void) {
     switch(esp_reset_reason()) {
     case ESP_RST_POWERON: return "power-on";
@@ -123,8 +145,8 @@ static cJSON *provisioning_json(void) {
     rf_provision_get_status(&p);
     cJSON *o=cJSON_CreateObject();
     cJSON_AddBoolToObject(o,"wifi",p.wifi);
-    cJSON_AddBoolToObject(o,"device_password",p.device_password);
     cJSON_AddBoolToObject(o,"tls",p.tls);
+    cJSON_AddBoolToObject(o,"management_claimed",rf_ownership_claimed());
     return o;
 }
 static cJSON *fan_json(void) {
@@ -168,6 +190,49 @@ static cJSON *config_json(const rf_management_settings_t *s) {
     cJSON_AddItemToObject(o,"provisioning",provisioning_json());
     return o;
 }
+/* ---- Enrollment: the only handlers on an unclaimed board ---- */
+static esp_err_t enrollment_index(httpd_req_t *req) {
+    static const char html[]="<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>RF Controller enrollment</title></head><body>"
+        "<h1>Management enrollment required</h1>"
+        "<p>This controller has not been claimed, so normal management is disabled.</p>"
+        "<p>Claim it with the setup tool, or with <code>PUT /api/v1/provisioning/claim</code>. "
+        "The one-time enrollment code is shown only on the serial and USB consoles.</p>"
+        "<p>After the claim the controller restarts and from then on requires a client certificate signed by your management CA.</p>"
+        "</body></html>";
+    httpd_resp_set_type(req,"text/html; charset=utf-8");
+    no_store(req);
+    return httpd_resp_sendstr(req,html);
+}
+static esp_err_t claim_put(httpd_req_t *req) {
+    if(rf_ownership_claimed()) return send_error(req,"404 Not Found","Already claimed");
+    if(claim_failures>=MAX_CLAIM_FAILURES) return send_error(req,"429 Too Many Requests","Enrollment locked until reboot");
+    char code[RF_OWNERSHIP_CODE_LEN+2];
+    if(httpd_req_get_hdr_value_str(req,"X-Provisioning-Code",code,sizeof(code))!=ESP_OK)
+        return send_error(req,"401 Unauthorized","X-Provisioning-Code header required");
+    if(!rf_ownership_code_matches(code)) {
+        rf_secure_zero(code,sizeof(code));
+        if(++claim_failures>=MAX_CLAIM_FAILURES) {
+            ESP_LOGW(TAG,"Too many invalid enrollment attempts; reboot required for a new code");
+            return send_error(req,"429 Too Many Requests","Enrollment locked until reboot");
+        }
+        return send_error(req,"403 Forbidden","Invalid provisioning code");
+    }
+    char *pem=read_body(req,RF_OWNERSHIP_CA_MAX);
+    if(!pem) { rf_secure_zero(code,sizeof(code)); return ESP_OK; }
+    esp_err_t e=rf_ownership_claim(code,pem,req->content_len);
+    free(pem);
+    rf_secure_zero(code,sizeof(code));
+    if(e!=ESP_OK) return send_error(req,"400 Bad Request","Invalid management CA: it must be a PEM certificate allowed to sign certificates");
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddBoolToObject(o,"claimed",true);
+    cJSON_AddBoolToObject(o,"reboot_required",true);
+    cJSON_AddStringToObject(o,"management_mode_after_reboot","mtls_authenticated");
+    e=send_json(req,"202 Accepted",o);
+    if(schedule_reboot()!=ESP_OK) ESP_LOGE(TAG,"Claimed, but the automatic reboot could not be scheduled; reset the board");
+    return e;
+}
+/* ---- Management: registered only on a claimed board, behind mTLS ---- */
 static esp_err_t index_handler(httpd_req_t *req) {
     httpd_resp_set_type(req,"text/html; charset=utf-8");
     no_store(req);
@@ -183,41 +248,7 @@ static esp_err_t health_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(o,"network_ready",ready);
     return send_json(req,ready?"200 OK":"503 Service Unavailable",o);
 }
-static esp_err_t session_get(httpd_req_t *req) {
-    cJSON *o=cJSON_CreateObject();
-    cJSON_AddBoolToObject(o,"authenticated",logged_in(req));
-    return send_json(req,"200 OK",o);
-}
-static esp_err_t session_post(httpd_req_t *req) {
-    if(!rf_login_allowed(now_ms())) return send_error(req,"429 Too Many Requests","Too many failed logins; try later");
-    cJSON *body=read_json(req,SMALL_BODY);
-    if(!body) return ESP_OK;
-    const char *password=json_string(body,"password",RF_DEVICE_PASSWORD_MAX);
-    bool match=false;
-    if(password) rf_provision_verify_device_password(password,&match);
-    delete_secret_json(body);
-    rf_login_result(match,now_ms());
-    if(!match) return send_error(req,"401 Unauthorized","Login failed");
-    char token[RF_SESSION_TOKEN_LEN+1],cookie[RF_SESSION_TOKEN_LEN+80];
-    rf_session_create(now_ms(),token);
-    snprintf(cookie,sizeof(cookie),SESSION_COOKIE "=%s; Path=/; Secure; HttpOnly; SameSite=Strict",token);
-    httpd_resp_set_hdr(req,"Set-Cookie",cookie);
-    cJSON *o=cJSON_CreateObject();
-    cJSON_AddBoolToObject(o,"authenticated",true);
-    esp_err_t e=send_json(req,"200 OK",o);
-    rf_secure_zero(token,sizeof(token));
-    rf_secure_zero(cookie,sizeof(cookie));
-    return e;
-}
-static esp_err_t session_delete(httpd_req_t *req) {
-    if(logged_in(req)) rf_session_destroy();
-    cJSON *o=cJSON_CreateObject();
-    cJSON_AddBoolToObject(o,"authenticated",false);
-    return send_json(req,"200 OK",o);
-}
-#define REQUIRE_LOGIN(req) do { if(!logged_in(req)) return send_error(req,"401 Unauthorized","Login required"); } while(0)
 static esp_err_t status_handler(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     rf_management_settings_t s;
     if(rf_settings_load(&s)!=ESP_OK) return send_error(req,"500 Internal Server Error","Configuration unavailable");
     const esp_app_desc_t *app=esp_app_get_description();
@@ -248,16 +279,17 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON_AddItemToObject(o,"fan",fan_json());
     cJSON_AddItemToObject(o,"temperature",temperature_json());
     cJSON_AddItemToObject(o,"provisioning",provisioning_json());
+    cJSON *console=cJSON_AddObjectToObject(o,"console");
+    cJSON_AddStringToObject(console,"mode","mtls");
+    cJSON_AddStringToObject(console,"server_certificate",bootstrap_cert?"bootstrap":"provisioned");
     return send_json(req,"200 OK",o);
 }
 static esp_err_t filter_get(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     cJSON *o=cJSON_CreateObject();
     cJSON_AddNumberToObject(o,"filter",rf_filter_current());
     return send_json(req,"200 OK",o);
 }
 static esp_err_t filter_put(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     cJSON *body=read_json(req,SMALL_BODY);
     if(!body) return ESP_OK;
     int port;
@@ -268,11 +300,9 @@ static esp_err_t filter_put(httpd_req_t *req) {
     return filter_get(req);
 }
 static esp_err_t fan_get(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     return send_json(req,"200 OK",fan_json());
 }
 static esp_err_t fan_put(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     cJSON *body=read_json(req,SMALL_BODY);
     if(!body) return ESP_OK;
     int percent;
@@ -283,11 +313,9 @@ static esp_err_t fan_put(httpd_req_t *req) {
     return send_json(req,"200 OK",fan_json());
 }
 static esp_err_t temperature_get(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     return send_json(req,"200 OK",temperature_json());
 }
 static esp_err_t config_get(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     rf_management_settings_t s;
     if(rf_settings_load(&s)!=ESP_OK) return send_error(req,"500 Internal Server Error","Configuration unavailable");
     return send_json(req,"200 OK",config_json(&s));
@@ -301,7 +329,6 @@ static bool copy_field(char *dst, size_t cap, const cJSON *obj, const char *key)
 typedef bool (*settings_edit_t)(rf_management_settings_t *s, const cJSON *body);
 /* Shared by the hostname, NTP and network calls: edit a copy, validate it whole, then save. */
 static esp_err_t settings_put(httpd_req_t *req, settings_edit_t edit) {
-    REQUIRE_LOGIN(req);
     rf_management_settings_t s;
     if(rf_settings_load(&s)!=ESP_OK) return send_error(req,"500 Internal Server Error","Configuration unavailable");
     cJSON *body=read_json(req,SMALL_BODY);
@@ -338,7 +365,6 @@ static esp_err_t stored_reply(httpd_req_t *req, esp_err_t e) {
     return send_json(req,"200 OK",o);
 }
 static esp_err_t wifi_put(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     cJSON *body=read_json(req,SMALL_BODY);
     if(!body) return ESP_OK;
     const char *ssid=json_string(body,"ssid",RF_SSID_MAX),*password=json_string(body,"password",RF_WIFI_PASSWORD_MAX);
@@ -347,7 +373,6 @@ static esp_err_t wifi_put(httpd_req_t *req) {
     return stored_reply(req,e);
 }
 static esp_err_t tls_put(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     cJSON *body=read_json(req,TLS_BODY);
     if(!body) return ESP_OK;
     const char *cert=json_string(body,"certificate",RF_PEM_MAX),*key=json_string(body,"private_key",RF_PEM_MAX);
@@ -355,36 +380,17 @@ static esp_err_t tls_put(httpd_req_t *req) {
     delete_secret_json(body);
     return stored_reply(req,e);
 }
-static esp_err_t password_put(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
-    if(!rf_login_allowed(now_ms())) return send_error(req,"429 Too Many Requests","Too many failed attempts; try later");
-    cJSON *body=read_json(req,SMALL_BODY);
-    if(!body) return ESP_OK;
-    const char *current=json_string(body,"current",RF_DEVICE_PASSWORD_MAX),*next=json_string(body,"new",RF_DEVICE_PASSWORD_MAX);
-    bool match=false;
-    if(current) rf_provision_verify_device_password(current,&match);
-    rf_login_result(match,now_ms());
-    esp_err_t e=ESP_ERR_INVALID_ARG;
-    if(match && next) e=rf_provision_set_device_password(next);
-    delete_secret_json(body);
-    if(!match) return send_error(req,"401 Unauthorized","Current password is wrong");
-    if(e==ESP_ERR_INVALID_ARG) return send_error(req,"400 Bad Request","New password must be 12 to 64 printable characters");
+static esp_err_t tls_delete(httpd_req_t *req) {
+    esp_err_t e=rf_provision_clear_tls();
     if(e!=ESP_OK) return send_error(req,"500 Internal Server Error",esp_err_to_name(e));
-    rf_session_destroy();
     cJSON *o=cJSON_CreateObject();
-    cJSON_AddBoolToObject(o,"changed",true);
+    cJSON_AddBoolToObject(o,"removed",true);
+    cJSON_AddBoolToObject(o,"reboot_required",true);
     return send_json(req,"200 OK",o);
 }
-static void reboot_now(void *arg) {
-    esp_restart();
-}
 static esp_err_t reboot_post(httpd_req_t *req) {
-    REQUIRE_LOGIN(req);
     if(!header_equals(req,"X-Confirm-Reboot","REBOOT")) return send_error(req,"412 Precondition Failed","Send X-Confirm-Reboot: REBOOT");
-    const esp_timer_create_args_t args={.callback=reboot_now,.name="reboot"};
-    if(!reboot_timer && esp_timer_create(&args,&reboot_timer)!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not schedule reboot");
-    esp_timer_stop(reboot_timer);
-    if(esp_timer_start_once(reboot_timer,1000000)!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not schedule reboot");
+    if(schedule_reboot()!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not schedule reboot");
     cJSON *o=cJSON_CreateObject();
     cJSON_AddBoolToObject(o,"scheduled",true);
     cJSON_AddStringToObject(o,"action","reboot");
@@ -412,7 +418,8 @@ static esp_err_t metrics_get(httpd_req_t *req) {
     no_store(req);
     return httpd_resp_send(req,buf,(ssize_t)n);
 }
-static esp_err_t load_pem(nvs_handle_t nvs,const char *name,char **out,size_t *len) {
+/* ---- Server credentials ---- */
+static esp_err_t load_pem(nvs_handle_t nvs, const char *name, char **out, size_t *len) {
     *out=NULL; *len=0;
     esp_err_t err=nvs_get_blob(nvs,name,NULL,len);
     if(err!=ESP_OK || *len<32 || *len>16384) return ESP_ERR_INVALID_SIZE;
@@ -420,28 +427,62 @@ static esp_err_t load_pem(nvs_handle_t nvs,const char *name,char **out,size_t *l
     if(!buf) return ESP_ERR_NO_MEM;
     size_t actual=*len;
     err=nvs_get_blob(nvs,name,buf,&actual);
-    if(err!=ESP_OK || actual!=*len || buf[actual-1]!='\0') {
-        memset(buf,0,*len+1); free(buf); return ESP_ERR_INVALID_STATE;
+    if(err!=ESP_OK || actual!=*len || buf[actual-1]!='\0') { rf_secure_zero(buf,*len+1); free(buf); return ESP_ERR_INVALID_STATE; }
+    *out=buf;
+    return ESP_OK;
+}
+/* Uses the certificate stored with set-tls or PUT /api/v1/config/tls, otherwise the board's bootstrap certificate. */
+static esp_err_t load_server_credentials(size_t *cert_len) {
+    nvs_handle_t h;
+    if(nvs_open("tls",NVS_READONLY,&h)==ESP_OK) {
+        esp_err_t e=load_pem(h,"cert",&server_cert,cert_len);
+        if(e==ESP_OK) e=load_pem(h,"key",&server_key,&server_key_len);
+        nvs_close(h);
+        if(e==ESP_OK) { bootstrap_cert=false; return ESP_OK; }
+        free(server_cert); server_cert=NULL;
+        ESP_LOGW(TAG,"Stored TLS certificate unusable (%s); using the bootstrap certificate",esp_err_to_name(e));
     }
-    *out=buf; return ESP_OK;
+    bootstrap_cert=true;
+    return rf_bootstrap_tls_load(&server_cert,cert_len,&server_key,&server_key_len);
+}
+/* The setup tool reads this line from the console and pins the certificate by it. */
+static void log_server_fingerprint(size_t cert_len) {
+    char hex[65];
+    if(bootstrap_cert) {
+        if(rf_bootstrap_tls_sha256(hex)==ESP_OK) ESP_LOGW(TAG,"Bootstrap certificate SHA-256: %s",hex);
+        return;
+    }
+    mbedtls_x509_crt crt;
+    mbedtls_x509_crt_init(&crt);
+    uint8_t d[32];
+    size_t n=0;
+    if(!mbedtls_x509_crt_parse(&crt,(const unsigned char*)server_cert,cert_len) &&
+       psa_hash_compute(PSA_ALG_SHA_256,crt.raw.p,crt.raw.len,d,sizeof(d),&n)==PSA_SUCCESS && n==32) {
+        rf_hex_upper(d,sizeof(d),hex);
+        ESP_LOGW(TAG,"Server certificate SHA-256: %s",hex);
+    }
+    mbedtls_x509_crt_free(&crt);
+}
+static void free_credentials(void) {
+    if(server_key) { rf_secure_zero(server_key,server_key_len); free(server_key); server_key=NULL; }
+    free(server_cert); server_cert=NULL;
+    free(client_ca); client_ca=NULL;
 }
 esp_err_t web_start(void) {
     if(server) return ESP_ERR_INVALID_STATE;
-    nvs_handle_t h;
-    esp_err_t err=nvs_open("tls",NVS_READONLY,&h);
-    if(err!=ESP_OK) { ESP_LOGW(TAG,"No TLS credentials provisioned; management listener disabled"); return err; }
-    size_t cert_len=0,key_len=0;
-    err=load_pem(h,"cert",&server_cert,&cert_len);
-    if(err==ESP_OK) err=load_pem(h,"key",&server_key,&key_len);
-    nvs_close(h);
-    if(err!=ESP_OK) goto fail;
-    const httpd_uri_t routes[]={
+    size_t cert_len=0,ca_len=0;
+    esp_err_t err=load_server_credentials(&cert_len);
+    bool claimed=rf_ownership_claimed();
+    if(err==ESP_OK && claimed) err=rf_ownership_load_ca(&client_ca,&ca_len);
+    if(err!=ESP_OK) { free_credentials(); ESP_LOGE(TAG,"HTTPS management disabled: %s",esp_err_to_name(err)); return err; }
+    const httpd_uri_t enrollment[]={
+        {.uri="/",.method=HTTP_GET,.handler=enrollment_index},
+        {.uri="/api/v1/provisioning/claim",.method=HTTP_PUT,.handler=claim_put},
+    };
+    const httpd_uri_t management[]={
         {.uri="/",.method=HTTP_GET,.handler=index_handler},
         {.uri="/api/v1/health",.method=HTTP_GET,.handler=health_handler},
         {.uri="/metrics",.method=HTTP_GET,.handler=metrics_get},
-        {.uri="/api/v1/session",.method=HTTP_GET,.handler=session_get},
-        {.uri="/api/v1/session",.method=HTTP_POST,.handler=session_post},
-        {.uri="/api/v1/session",.method=HTTP_DELETE,.handler=session_delete},
         {.uri="/api/v1/status",.method=HTTP_GET,.handler=status_handler},
         {.uri="/api/v1/rf/filter",.method=HTTP_GET,.handler=filter_get},
         {.uri="/api/v1/rf/filter",.method=HTTP_PUT,.handler=filter_put},
@@ -453,25 +494,32 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/config/ntp",.method=HTTP_PUT,.handler=ntp_put},
         {.uri="/api/v1/config/network",.method=HTTP_PUT,.handler=network_put},
         {.uri="/api/v1/config/wifi",.method=HTTP_PUT,.handler=wifi_put},
-        {.uri="/api/v1/config/password",.method=HTTP_PUT,.handler=password_put},
         {.uri="/api/v1/config/tls",.method=HTTP_PUT,.handler=tls_put},
+        {.uri="/api/v1/config/tls",.method=HTTP_DELETE,.handler=tls_delete},
         {.uri="/api/v1/system/reboot",.method=HTTP_POST,.handler=reboot_post},
     };
+    const httpd_uri_t *routes=claimed?management:enrollment;
+    size_t count=claimed?sizeof(management)/sizeof(management[0]):sizeof(enrollment)/sizeof(enrollment[0]);
     httpd_ssl_config_t cfg=HTTPD_SSL_CONFIG_DEFAULT();
     cfg.servercert=(const unsigned char*)server_cert;
     cfg.servercert_len=cert_len;
     cfg.prvtkey_pem=(const unsigned char*)server_key;
-    cfg.prvtkey_len=key_len;
-    cfg.httpd.max_uri_handlers=sizeof(routes)/sizeof(routes[0]);
+    cfg.prvtkey_len=server_key_len;
+    /* With a CA set, the TLS handshake fails for any client without a certificate it signed. */
+    cfg.cacert_pem=claimed?(const unsigned char*)client_ca:NULL;
+    cfg.cacert_len=claimed?ca_len:0;
+    cfg.httpd.max_uri_handlers=count;
     cfg.httpd.lru_purge_enable=true;
     err=httpd_ssl_start(&server,&cfg);
-    if(err!=ESP_OK) goto fail;
-    for(size_t i=0;i<sizeof(routes)/sizeof(routes[0]) && err==ESP_OK;i++) err=httpd_register_uri_handler(server,&routes[i]);
-    if(err==ESP_OK) return ESP_OK;
-    httpd_ssl_stop(server); server=NULL;
-fail:
-    if(server_key) { memset(server_key,0,key_len); free(server_key); server_key=NULL; }
-    free(server_cert); server_cert=NULL;
-    ESP_LOGE(TAG,"HTTPS management disabled: %s",esp_err_to_name(err));
-    return err;
+    for(size_t i=0;i<count && err==ESP_OK;i++) err=httpd_register_uri_handler(server,&routes[i]);
+    if(err!=ESP_OK) {
+        if(server) { httpd_ssl_stop(server); server=NULL; }
+        free_credentials();
+        ESP_LOGE(TAG,"HTTPS management disabled: %s",esp_err_to_name(err));
+        return err;
+    }
+    if(claimed) ESP_LOGW(TAG,"mTLS management console active on TCP/443; client certificate required");
+    else ESP_LOGW(TAG,"UNPROVISIONED enrollment-only HTTPS active on TCP/443; normal management handlers are disabled");
+    log_server_fingerprint(cert_len);
+    return ESP_OK;
 }
