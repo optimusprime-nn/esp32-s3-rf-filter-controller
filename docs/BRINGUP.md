@@ -11,7 +11,11 @@ The native USB port is all you need: it flashes the board, carries the boot log 
 If your board also has a UART port (often a CH343 or CP210x adapter), you can leave it unplugged. The log goes to both ports, but the console is on native USB only.
 
 ## 1. Build and flash
-From an activated ESP-IDF shell. The full erase is required on any board with older firmware, and it wipes everything in NVS.
+From an activated ESP-IDF shell. Keep the full erase even on a new board: most come with a factory test program, and the erase removes it and anything it left in NVS. On a board that has run this firmware before, the erase also wipes its claim, Wi-Fi credentials and settings.
+
+A new board needs no other preparation; the ESP32-S3's ROM bootloader can be flashed over native USB as it ships. If the factory program keeps the port busy or reboots too fast to connect, use the BOOT and RESET buttons as below.
+
+The first boot takes longer than later ones, because the board generates its bootstrap key and certificate. That only happens once.
 
 ```sh
 idf.py set-target esp32s3
