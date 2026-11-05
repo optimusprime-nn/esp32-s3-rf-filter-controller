@@ -3,32 +3,42 @@
 Run this with no RF connected. It checks the firmware and the A/B control lines only.
 
 ## What you need
-- ESP32-S3 N16R8 board. Its native USB port and its UART port are separate connectors on most dev boards; connect both if you have both.
+- ESP32-S3 N16R8 board, connected by its **native USB** port (GPIO19/20, often labelled `USB` rather than `UART` or `COM`).
 - ESP-IDF v6.1 and a multimeter or logic probe.
 
-The UART port (often a CH343 or CP210x adapter) carries flashing and logs. The provisioning console is on the **native USB** port only, which appears as its own COM port.
+The native USB port is all you need: it flashes the board, carries the boot log and runs the `rf>` provisioning console. It appears as a USB Serial/JTAG COM port (`USB JTAG/serial debug unit` in Device Manager).
+
+If your board also has a UART port (often a CH343 or CP210x adapter), you can leave it unplugged. The log goes to both ports, but the console is on native USB only.
 
 ## 1. Build and flash
-From an activated ESP-IDF shell. The full erase is required on any board with older firmware, and it wipes everything in NVS.
+From an activated ESP-IDF shell. Keep the full erase even on a new board: most come with a factory test program, and the erase removes it and anything it left in NVS. On a board that has run this firmware before, the erase also wipes its claim, Wi-Fi credentials and settings.
+
+A new board needs no other preparation; the ESP32-S3's ROM bootloader can be flashed over native USB as it ships. If the factory program keeps the port busy or reboots too fast to connect, use the BOOT and RESET buttons as below.
+
+The first boot takes longer than later ones, because the board generates its bootstrap key and certificate. That only happens once.
 
 ```sh
 idf.py set-target esp32s3
 idf.py build
-idf.py -p <uart-port> erase-flash flash monitor
+idf.py -p <usb-port> erase-flash flash monitor
 ```
 
-Replace `<uart-port>` with your board's UART port. Check it first: on a computer with other boards attached, the wrong port erases the wrong board.
+Replace `<usb-port>` with the board's native USB port. Check it first: on a computer with other boards attached, the wrong port erases the wrong board. Unplug the board, list the ports, plug it in and list them again; the new one is yours.
+
+If flashing can't connect, hold **BOOT**, press and release **RESET**, release **BOOT**, and run the command again. After flashing, press **RESET** if the board stays in download mode. The port disappears briefly at every reset, and the monitor reconnects by itself, so the first lines of a boot can be missing; `enrollment` and `status` repeat what you need.
 
 **Pass:** the log shows 16 MB flash and 8 MB PSRAM found, `Selected filter 1`, and `USB provisioning console ready`, with no boot loop. Without Wi-Fi credentials it also logs that the network is disabled, which is expected.
 
 ## 2. Open the console
-Connect to the native USB port. Any serial terminal works; the IDF Python environment includes one:
+The monitor from step 1 is already the console: press Enter for the `rf>` prompt, then run `status`. Leave the monitor with Ctrl-].
+
+Later, without rebuilding, any serial terminal works on the same port. The IDF Python environment includes one:
 
 ```sh
 python -m serial.tools.miniterm <usb-port> 115200
 ```
 
-Press Enter for the `rf>` prompt, then run `status`.
+Log lines can appear in the middle of what you type; the command still works.
 
 **Pass:** it shows the firmware version, filter 1, Wi-Fi and TLS `missing`, and `Management: unclaimed`.
 
