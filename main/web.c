@@ -43,6 +43,7 @@ static unsigned claim_failures;
 #define TLS_BODY 40000
 #define MAX_CLAIM_FAILURES 5
 extern const char index_html_start[] asm("_binary_index_html_start");
+extern const char weather_html_start[] asm("_binary_weather_html_start");
 extern esp_err_t rf_network_get_ip(char *out, size_t len);
 static int64_t now_ms(void) {
     return esp_timer_get_time()/1000;
@@ -366,6 +367,53 @@ static esp_err_t temperature_get(httpd_req_t *req) {
 static esp_err_t weather_get(httpd_req_t *req) {
     return send_json(req,"200 OK",weather_json());
 }
+/* Streams the history as JSON in pieces, so 48 hours of samples never sit in RAM as cJSON. */
+static esp_err_t weather_history_get(httpd_req_t *req) {
+    unsigned hours=24;
+    char q[32],v[8];
+    if(httpd_req_get_url_query_str(req,q,sizeof(q))==ESP_OK && httpd_query_key_value(q,"hours",v,sizeof(v))==ESP_OK) {
+        char *end;
+        long h=strtol(v,&end,10);
+        if(*end || h<1 || h>48) return send_error(req,"400 Bad Request","hours must be 1 to 48");
+        hours=(unsigned)h;
+    }
+    uint32_t oldest,end;
+    size_t cap;
+    rf_weather_history_span(&oldest,&end,&cap);
+    uint32_t now_s=(uint32_t)(now_ms()/1000);
+    httpd_resp_set_type(req,"application/json");
+    no_store(req);
+    char buf[1536];
+    int n=snprintf(buf,sizeof(buf),"{\"interval_s\":%d,\"capacity_hours\":%u,\"fields\":[\"age_s\",\"temperature_c\",\"humidity_percent\","
+        "\"wind_avg_kmh\",\"wind_gust_kmh\",\"wind_dir_deg\",\"rain_mm\",\"uv_index\",\"light_lux\",\"rssi_dbm\"],\"points\":[",
+        RF_WEATHER_HISTORY_INTERVAL_S,(unsigned)(cap/60));
+    if(httpd_resp_send_chunk(req,buf,n)!=ESP_OK) return ESP_FAIL;
+    rf_weather_sample_t s[16];
+    uint32_t seq=oldest;
+    bool first=true;
+    for(;;) {
+        size_t got=rf_weather_history_copy(seq,s,16,&seq);
+        if(!got) break;
+        size_t len=0;
+        for(size_t i=0;i<got;i++) {
+            uint32_t age=now_s-s[i].t_s;
+            if(age>hours*3600u) continue;
+            len+=(size_t)snprintf(buf+len,sizeof(buf)-len,"%s[%lu,%.1f,%u,%.1f,%.1f,%u,%.1f,%d,%lu,%d]",first?"":",",
+                (unsigned long)age,s[i].temp_dc/10.0,(unsigned)s[i].humidity,rf_vevor_wind_kmh(s[i].wind_raw),
+                rf_vevor_gust_kmh(s[i].gust_raw),(unsigned)s[i].wind_dir_deg,rf_vevor_rain_mm(s[i].rain_raw),
+                (int)s[i].uv_index,(unsigned long)s[i].light_lux,(int)s[i].rssi_dbm);
+            first=false;
+        }
+        if(len && httpd_resp_send_chunk(req,buf,(ssize_t)len)!=ESP_OK) return ESP_FAIL;
+    }
+    if(httpd_resp_send_chunk(req,"]}",2)!=ESP_OK) return ESP_FAIL;
+    return httpd_resp_send_chunk(req,NULL,0);
+}
+static esp_err_t weather_page(httpd_req_t *req) {
+    httpd_resp_set_type(req,"text/html; charset=utf-8");
+    no_store(req);
+    return httpd_resp_sendstr(req,weather_html_start);
+}
 static esp_err_t weather_station_put(httpd_req_t *req) {
     cJSON *body=read_json(req,SMALL_BODY);
     if(!body) return ESP_OK;
@@ -582,7 +630,9 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/fan",.method=HTTP_GET,.handler=fan_get},
         {.uri="/api/v1/fan",.method=HTTP_PUT,.handler=fan_put},
         {.uri="/api/v1/sensors/temperature",.method=HTTP_GET,.handler=temperature_get},
+        {.uri="/weather",.method=HTTP_GET,.handler=weather_page},
         {.uri="/api/v1/sensors/weather",.method=HTTP_GET,.handler=weather_get},
+        {.uri="/api/v1/sensors/weather/history",.method=HTTP_GET,.handler=weather_history_get},
         {.uri="/api/v1/sensors/weather/station",.method=HTTP_PUT,.handler=weather_station_put},
         {.uri="/api/v1/config",.method=HTTP_GET,.handler=config_get},
         {.uri="/api/v1/config/hostname",.method=HTTP_PUT,.handler=hostname_put},

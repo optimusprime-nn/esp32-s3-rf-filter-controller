@@ -1,6 +1,7 @@
 /* CC1101 receiver for the VEVOR 7-in-1 weather station. */
 #include "weather.h"
 #include "cc1101_config.h"
+#include "esp_heap_caps.h"
 #include "sdkconfig.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -43,6 +44,10 @@ static spi_device_handle_t radio;
 static SemaphoreHandle_t lock, packet_sem;
 static rf_weather_status_t state={.receiver=RF_WEATHER_MISSING};
 static int64_t last_ok_ms,heard_ms[RF_WEATHER_MAX_HEARD];
+static rf_weather_history_t history;
+/* 48 hours at one sample a minute in PSRAM, or 6 hours in internal RAM without it. */
+#define HISTORY_PSRAM (48*60)
+#define HISTORY_INTERNAL (6*60)
 
 static int64_t now_ms(void) { return esp_timer_get_time()/1000; }
 
@@ -131,6 +136,7 @@ static void handle_frame(uint8_t *frame) {
         state.last=r;
         state.rssi_dbm=rssi;
         last_ok_ms=t;
+        rf_weather_history_add(&history,&r,rssi,(uint32_t)(t/1000));
         if(first) ESP_LOGI(TAG,"Weather station %04x heard, %d dBm",r.id,rssi);
     }
     xSemaphoreGive(lock);
@@ -165,6 +171,11 @@ esp_err_t rf_weather_start(void) {
     packet_sem=xSemaphoreCreateBinary();
     if(!lock || !packet_sem) return ESP_ERR_NO_MEM;
     state.frequency_khz=CONFIG_RF_WEATHER_FREQ_KHZ;
+    size_t cap=HISTORY_PSRAM;
+    rf_weather_sample_t *hb=heap_caps_calloc(cap,sizeof(*hb),MALLOC_CAP_SPIRAM);
+    if(!hb) { cap=HISTORY_INTERNAL; hb=heap_caps_calloc(cap,sizeof(*hb),MALLOC_CAP_INTERNAL); }
+    if(!hb) cap=0;
+    rf_weather_history_init(&history,hb,cap);
     state.sensor_id_filter=CONFIG_RF_WEATHER_SENSOR_ID;
     nvs_handle_t h;
     if(nvs_open("rfconfig",NVS_READONLY,&h)==ESP_OK) {
@@ -221,6 +232,21 @@ void rf_weather_status(rf_weather_status_t *out) {
     for(size_t i=0;i<state.heard_count;i++) out->heard[i].age_ms=t-heard_ms[i];
     xSemaphoreGive(lock);
 }
+size_t rf_weather_history_copy(uint32_t seq, rf_weather_sample_t *out, size_t max, uint32_t *next) {
+    if(!lock) { *next=0; return 0; }
+    xSemaphoreTake(lock,portMAX_DELAY);
+    size_t n=rf_weather_history_read(&history,seq,out,max,next);
+    xSemaphoreGive(lock);
+    return n;
+}
+void rf_weather_history_span(uint32_t *oldest, uint32_t *end, size_t *capacity) {
+    if(!lock) { *oldest=*end=0; *capacity=0; return; }
+    xSemaphoreTake(lock,portMAX_DELAY);
+    *oldest=rf_weather_history_oldest(&history);
+    *end=history.next_seq;
+    *capacity=history.cap;
+    xSemaphoreGive(lock);
+}
 esp_err_t rf_weather_set_station(int32_t id) {
     if(id<-1 || id>0xFFFF) return ESP_ERR_INVALID_ARG;
     if(!lock) return ESP_ERR_INVALID_STATE;
@@ -251,6 +277,8 @@ void rf_weather_status(rf_weather_status_t *out) {
     *out=(rf_weather_status_t){.receiver=RF_WEATHER_DISABLED,.sensor_id_filter=-1,.age_ms=-1};
 }
 esp_err_t rf_weather_set_station(int32_t id) { return ESP_ERR_NOT_SUPPORTED; }
+size_t rf_weather_history_copy(uint32_t seq, rf_weather_sample_t *out, size_t max, uint32_t *next) { *next=0; return 0; }
+void rf_weather_history_span(uint32_t *oldest, uint32_t *end, size_t *capacity) { *oldest=*end=0; *capacity=0; }
 
 #endif
 

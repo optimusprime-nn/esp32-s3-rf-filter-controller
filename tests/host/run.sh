@@ -19,3 +19,6 @@ gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address
 gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
     -Imain tests/host/test_weather.c main/weather_decode.c main/cc1101_config.c -lm -o "$out/test_weather"
 "$out/test_weather"
+gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
+    -Imain tests/host/test_weather_history.c main/weather_history.c -o "$out/test_weather_history"
+"$out/test_weather_history"
