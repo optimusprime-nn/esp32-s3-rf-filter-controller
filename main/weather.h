@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "weather_decode.h"
+#include "weather_history.h"
 
 typedef enum { RF_WEATHER_DISABLED, RF_WEATHER_MISSING, RF_WEATHER_RUNNING } rf_weather_receiver_t;
 
@@ -39,4 +40,7 @@ esp_err_t rf_weather_start(void);
 void rf_weather_status(rf_weather_status_t *out);
 /* Accepts only this station ID from now on, or any with -1. Saved for the next boot. */
 esp_err_t rf_weather_set_station(int32_t id);
+/* History, one sample a minute while readings arrive; cleared at reboot. */
+void rf_weather_history_span(uint32_t *oldest, uint32_t *end, size_t *capacity);
+size_t rf_weather_history_copy(uint32_t seq, rf_weather_sample_t *out, size_t max, uint32_t *next);
 const char *rf_weather_receiver_name(rf_weather_receiver_t r);

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Station</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1b1f24;--muted:#5b6470;--line:#d8dde3;--grid:#eceff3;--accent:#1f6feb;--second:#d97706;--bad:#c62828;--ok:#2e7d32}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1f24;--text:#e8eaed;--muted:#9aa3ad;--line:#2f353c;--grid:#252a30;--accent:#58a6ff;--second:#f0a03c;--bad:#ff6b6b;--ok:#6ccf76}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px}
+a{color:var(--accent)}
+h1{font-size:20px;margin:0}
+h2{font-size:14px;margin:0 0 6px;color:var(--muted);font-weight:600}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px}
+.now{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr))}
+.temp{font-size:56px;line-height:1;font-variant-numeric:tabular-nums}
+.v{font-size:24px;font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}.bad{color:var(--bad)}
+.charts{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));margin-top:12px}
+.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));margin-top:12px}
+button,select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+svg.chart{width:100%;height:170px;display:block}
+svg.chart text{fill:var(--muted);font-size:11px}
+.legend{font-size:12px;color:var(--muted)}.legend i{display:inline-block;width:10px;height:3px;margin:0 4px 3px 8px;vertical-align:middle}
+#compass{width:64px;height:64px;float:right}
+#compass circle{fill:none;stroke:var(--line);stroke-width:2}#compass path{fill:var(--accent)}#compass text{fill:var(--muted);font-size:8px}
+#msg{min-height:1.4em}
+</style>
+</head>
+<body>
+<main>
+<div class="top">
+<h1>Weather station</h1>
+<div class="row">
+<select id="units" aria-label="Units"><option value="metric">°C, km/h, mm</option><option value="imperial">°F, mph, in</option></select>
+<a href="/">Controller dashboard</a>
+</div>
+</div>
+<p id="msg" class="muted" role="status"></p>
+
+<div class="now" id="now" hidden>
+<div class="card">
+<h2>Now</h2>
+<div class="temp" id="temp">–</div>
+<div class="muted" id="hum"></div>
+<div class="muted" id="age"></div>
+</div>
+<div class="card"><h2>Wind</h2>
+<svg id="compass" viewBox="-22 -22 44 44" role="img" aria-label="Wind direction"><circle r="20"/><text x="0" y="-13" text-anchor="middle">N</text><text x="0" y="18" text-anchor="middle">S</text><text x="-15" y="3" text-anchor="middle">W</text><text x="15" y="3" text-anchor="middle">E</text><path id="arrow" d="M0,-15 L5,6 L0,2 L-5,6 Z"/></svg>
+<div class="v" id="wind">–</div><div class="muted" id="gust"></div></div>
+<div class="card"><h2>Rain</h2><div class="v" id="rain">–</div><div class="muted" id="rainTotal"></div></div>
+<div class="card"><h2>Sun</h2><div class="v" id="uv">–</div><div class="muted" id="lux"></div></div>
+<div class="card"><h2>Sensor</h2><div class="v" id="rssi">–</div><div class="muted" id="batt"></div></div>
+</div>
+
+<div class="top" style="margin-top:16px">
+<h2 style="margin:0">History <span class="muted" id="histNote"></span></h2>
+<div class="row" id="ranges"></div>
+</div>
+<div class="stats" id="stats"></div>
+<div class="charts">
+<div class="card"><h2>Temperature <span class="u"></span></h2><svg class="chart" id="cTemp"></svg></div>
+<div class="card"><h2>Humidity <span class="u"></span></h2><svg class="chart" id="cHum"></svg></div>
+<div class="card"><h2>Wind <span class="u"></span> <span class="legend"><i style="background:var(--accent)"></i>average<i style="background:var(--second)"></i>gust</span></h2><svg class="chart" id="cWind"></svg></div>
+<div class="card"><h2><span id="rainTitle">Rainfall</span> <span class="u"></span></h2><svg class="chart" id="cRain"></svg></div>
+<div class="card"><h2>Light <span class="u"></span></h2><svg class="chart" id="cLux"></svg></div>
+<div class="card"><h2>UV index <span class="u"></span></h2><svg class="chart" id="cUv"></svg></div>
+<div class="card"><h2>Signal strength <span class="u"></span></h2><svg class="chart" id="cRssi"></svg></div>
+</div>
+</main>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const NS='http://www.w3.org/2000/svg';
+const DIRS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const RANGES=[1,6,24,48];
+let units='metric',hours=24,history=null;
+try{units=localStorage.getItem('units')||'metric';hours=+localStorage.getItem('wxHours')||24}catch(e){}
+if(!RANGES.includes(hours))hours=24;
+$('units').value=units;
+const imp=()=>units==='imperial';
+const tC=c=>imp()?c*9/5+32:c, tU=()=>imp()?'°F':'°C';
+const sp=k=>imp()?k/1.609344:k, sU=()=>imp()?'mph':'km/h';
+const rn=m=>imp()?m/25.4:m, rU=()=>imp()?'in':'mm', rD=()=>imp()?2:1;
+function ago(s){return s<90?s+' s ago':s<5400?Math.round(s/60)+' min ago':(s/3600).toFixed(1)+' h ago'}
+async function get(path){const r=await fetch(path,{cache:'no-store'});if(!r.ok)throw new Error((await r.text())||('HTTP '+r.status));return r.json()}
+
+function el(tag,attrs,parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e}
+/* series: [{v:[...],color}] aligned with t (ms). bars: draw first series as bars. */
+function chart(svg,t,series,opt){
+  svg.textContent='';
+  const W=svg.clientWidth||320,H=170,L=44,R=8,T=8,B=22;
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  const now=Date.now(),t0=now-hours*3600e3;
+  const vals=series.flatMap(s=>s.v).filter(v=>v!==null&&isFinite(v));
+  if(!vals.length){el('text',{x:W/2,y:H/2,'text-anchor':'middle'},svg).textContent='No data in this range';return}
+  let lo=Math.min(...vals),hi=Math.max(...vals);
+  if(opt.zero)lo=Math.min(0,lo);
+  if(opt.max!==undefined)hi=Math.max(hi,opt.max);
+  if(hi-lo<(opt.minSpan||1)){const m=(hi+lo)/2,h=(opt.minSpan||1)/2;lo=opt.zero?Math.max(0,m-h):m-h;hi=lo+(opt.minSpan||1)}
+  const pad=(hi-lo)*0.08;hi+=pad;if(!opt.zero)lo-=pad;
+  const x=ms=>L+(ms-t0)/(now-t0)*(W-L-R), y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+  for(let i=0;i<=3;i++){const v=lo+(hi-lo)*i/3,yy=y(v);
+    el('line',{x1:L,x2:W-R,y1:yy,y2:yy,stroke:'var(--grid)'},svg);
+    el('text',{x:L-6,y:yy+4,'text-anchor':'end'},svg).textContent=(+v.toFixed(opt.dp||0)).toLocaleString()}
+  const ticks=Math.max(2,Math.min(hours<=1?4:hours<=24?6:8,Math.floor((W-L-R)/(hours>24?110:70))));
+  for(let i=0;i<=ticks;i++){const ms=t0+(now-t0)*i/ticks,d=new Date(ms);
+    el('text',{x:x(ms),y:H-6,'text-anchor':i===0?'start':i===ticks?'end':'middle'},svg).textContent=
+      (hours>24&&i%2===0?d.toLocaleDateString([], {weekday:'short'})+' ':'')+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+  const u=svg.parentNode.querySelector('.u');if(u)u.textContent=opt.unit?'('+opt.unit+')':'';
+  series.forEach((s,si)=>{
+    if(opt.bars&&si===0){const bw=Math.max(2,opt.bars/(now-t0)*(W-L-R)*0.8);
+      s.v.forEach((v,i)=>{if(v===null||v<=0||t[i]+opt.bars<t0)return;const bx=Math.max(L,x(t[i]));
+        el('rect',{x:bx,y:y(v),width:Math.min(bw,W-R-bx),height:y(lo)-y(v),fill:s.color},svg)});return}
+    let d='',prev=null;
+    s.v.forEach((v,i)=>{if(v===null){prev=null;return}
+      const gap=prev!==null&&t[i]-t[prev]>180e3;
+      d+=(prev===null||gap?'M':'L')+x(t[i]).toFixed(1)+','+y(v).toFixed(1);prev=i});
+    el('path',{d,fill:'none',stroke:s.color,'stroke-width':2,'stroke-linejoin':'round'},svg);
+  });
+}
+function renderNow(w){
+  if(w.receiver!=='running'){$('now').hidden=true;$('msg').textContent=w.receiver==='disabled'?'The weather receiver is turned off in menuconfig.':'No CC1101 receiver found. Check its wiring and power, then reboot.';return}
+  const r=w.reading;
+  if(!r){$('now').hidden=true;$('msg').textContent='Listening on '+w.frequency_mhz.toFixed(3)+' MHz. The station sends every 20 seconds.';return}
+  $('now').hidden=false;
+  $('msg').textContent=r.stale?'No packet from the station for '+ago(r.age_s).replace(' ago','')+'. Showing the last reading.':'';
+  $('msg').className=r.stale?'bad':'muted';
+  $('temp').textContent=tC(r.temperature_c).toFixed(1)+tU();
+  $('hum').textContent=r.humidity_percent+'% humidity';
+  $('age').textContent='Station '+r.station+', updated '+ago(r.age_s);
+  $('wind').textContent=sp(r.wind_avg_kmh).toFixed(1)+' '+sU();
+  $('gust').textContent='Gust '+sp(r.wind_gust_kmh).toFixed(1)+' '+sU()+', from '+DIRS[Math.round(r.wind_dir_deg/22.5)%16]+' ('+r.wind_dir_deg+'°)';
+  $('arrow').setAttribute('transform','rotate('+((r.wind_dir_deg+180)%360)+')');
+  $('compass').setAttribute('aria-label','Wind from '+r.wind_dir_deg+' degrees');
+  $('rainTotal').textContent='Sensor total '+rn(r.rain_mm).toFixed(rD())+' '+rU();
+  $('uv').textContent='UV '+r.uv_index;
+  $('lux').textContent=r.light_lux.toLocaleString()+' lux';
+  $('rssi').textContent=r.rssi_dbm+' dBm';
+  $('batt').textContent='Battery '+(r.battery_ok?'ok':'low');$('batt').className=r.battery_ok?'muted':'bad';
+}
+/* Rainfall over the last hour, from the sensor's running total; a drop means the sensor restarted. */
+function rainSince(t,rain,fromMs){let sum=0,prev=null;
+  for(let i=0;i<t.length;i++){if(t[i]<fromMs){prev=rain[i];continue}if(prev!==null&&rain[i]>=prev)sum+=rain[i]-prev;prev=rain[i]}return sum}
+function renderHistory(){
+  if(!history)return;
+  const now=Date.now(),p=history.points;
+  const t=p.map(x=>now-x[0]*1000);
+  const temp=p.map(x=>tC(x[1])),hum=p.map(x=>x[2]),wind=p.map(x=>sp(x[3])),gust=p.map(x=>sp(x[4]));
+  const rainTot=p.map(x=>x[6]),uv=p.map(x=>x[7]),lux=p.map(x=>x[8]),rssi=p.map(x=>x[9]);
+  /* Rainfall in buckets: 10 minutes for short ranges, an hour otherwise. */
+  const bucket=hours<=6?600e3:3600e3,sums=new Map();
+  for(let i=1;i<t.length;i++){const d=rainTot[i]-rainTot[i-1];if(d>0){const k=Math.floor(t[i]/bucket);sums.set(k,(sums.get(k)||0)+d)}}
+  const bt=[...sums.keys()].map(k=>k*bucket),bv=[...sums.values()].map(rn);
+  $('rainTitle').textContent='Rainfall per '+(bucket===600e3?'10 minutes':'hour');
+  $('rain').textContent=p.length?rn(rainSince(t,rainTot,now-3600e3)).toFixed(rD())+' '+rU()+' last hour':'–';
+  $('histNote').textContent=p.length?'· '+p.length+' samples, kept on the controller for up to '+history.capacity_hours+' h':'· nothing recorded yet';
+  const s=$('stats');s.textContent='';
+  const stat=(k,v)=>{const c=document.createElement('div');c.className='card';c.innerHTML='<h2></h2><div class="v"></div>';c.firstChild.textContent=k;c.lastChild.textContent=v;s.appendChild(c)};
+  if(p.length){
+    stat('Low / high',Math.min(...temp).toFixed(1)+' / '+Math.max(...temp).toFixed(1)+tU());
+    stat('Strongest gust',Math.max(...gust).toFixed(1)+' '+sU());
+    stat('Rain in '+hours+' h',rn(rainSince(t,rainTot,now-hours*3600e3)).toFixed(rD())+' '+rU());
+    stat('Peak UV',Math.max(...uv));
+  }
+  chart($('cTemp'),t,[{v:temp,color:'var(--accent)'}],{unit:tU(),dp:1,minSpan:2});
+  chart($('cHum'),t,[{v:hum,color:'var(--accent)'}],{unit:'%',minSpan:10});
+  chart($('cWind'),t,[{v:wind,color:'var(--accent)'},{v:gust,color:'var(--second)'}],{unit:sU(),zero:true,dp:0,minSpan:5});
+  chart($('cRain'),bt,[{v:bv,color:'var(--accent)'}],{unit:rU(),zero:true,dp:rD(),minSpan:imp()?0.04:1,bars:bucket});
+  chart($('cLux'),t,[{v:lux,color:'var(--second)'}],{unit:'lux',zero:true,minSpan:100});
+  chart($('cUv'),t,[{v:uv,color:'var(--second)'}],{unit:'UV',zero:true,minSpan:3});
+  chart($('cRssi'),t,[{v:rssi,color:'var(--accent)'}],{unit:'dBm',minSpan:10});
+}
+for(const h of RANGES){const b=document.createElement('button');b.textContent=h+' h';b.dataset.h=h;
+  b.onclick=()=>{hours=h;try{localStorage.setItem('wxHours',h)}catch(e){};markRange();loadHistory()};$('ranges').appendChild(b)}
+function markRange(){for(const b of $('ranges').children){const on=+b.dataset.h===hours;b.classList.toggle('on',on);b.setAttribute('aria-pressed',on)}}
+$('units').onchange=()=>{units=$('units').value;try{localStorage.setItem('units',units)}catch(e){};refresh();renderHistory()};
+let busy=false;
+async function refresh(){if(busy)return;busy=true;try{renderNow(await get('/api/v1/sensors/weather'))}catch(e){$('msg').textContent=e.message;$('msg').className='bad'}finally{busy=false}}
+async function loadHistory(){try{history=await get('/api/v1/sensors/weather/history?hours='+hours);renderHistory()}catch(e){$('msg').textContent=e.message;$('msg').className='bad'}}
+markRange();refresh();loadHistory();
+setInterval(refresh,5000);setInterval(loadHistory,60000);
+let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(renderHistory,150)});
+</script>
+</body>
+</html>

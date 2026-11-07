@@ -113,6 +113,7 @@ Wire the CC1101 as in [HARDWARE.md](HARDWARE.md#weather-station-receiver). Witho
 | The dashboard's weather panel | Updates within 20 seconds of each transmission; wind arrow points where the wind is blowing to |
 | `weather-station <id>` with the ID from `weather`, then reset and `weather` | `station <id> only`, kept after the reset |
 | `weather-station any` | Back to accepting any station |
+| Open `https://<device-ip>/weather` and leave it for 10 minutes | Current conditions, and the charts fill in with one point a minute |
 
 If nothing is heard after a few minutes with the sensor close by, check the module's band and the antenna first. Then turn on "Invert the FSK data" in `menuconfig`, rebuild and flash, and try again. Tell me which setting worked, so the default can be fixed.
 

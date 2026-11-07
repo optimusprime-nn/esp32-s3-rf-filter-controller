@@ -61,6 +61,7 @@ Destructive actions need a header with a fixed word. Without it the device answe
 | Method | Path | Page |
 |---|---|---|
 | GET | `/` | Dashboard (before the claim: the enrollment information page). It refreshes every second from `GET /api/v1/status` |
+| GET | `/weather` | Weather station page: current conditions every 5 seconds, and charts of the history over 1, 6, 24 or 48 hours |
 
 To use the dashboard in a browser, import your client certificate (for example `admin-client.p12`) into the browser or the operating system's certificate store.
 
@@ -115,6 +116,7 @@ A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARD
 | Method | Path | Purpose | Body |
 |---|---|---|---|
 | GET | `/api/v1/sensors/weather` | The latest reading and the receiver's state | |
+| GET | `/api/v1/sensors/weather/history?hours=24` | Readings recorded on the controller, one a minute, for the last 1 to 48 hours (default 24) | |
 | PUT | `/api/v1/sensors/weather/station` | Accept only this station, or any with `null`. Saved for the next boot. `409` if the receiver isn't running | `{"station":"f8f7"}` |
 
 | Field | Meaning |
@@ -125,6 +127,8 @@ A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARD
 | `packets` | `ok` (new readings), `rejected` (failed checks, including noise that looks like a packet, so this grows slowly on its own) and `ignored` (other stations) |
 | `heard` | Up to four stations heard recently, accepted or not: `station`, `rssi_dbm`, `age_s` |
 | `reading` | `null` until the first packet, otherwise `station`, `channel`, `age_s`, `stale` (no packet for 90 s), `rssi_dbm`, `battery_ok`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg` (where the wind comes from), `rain_mm`, `uv_index`, `light_lux` |
+
+The history is `{"interval_s":60,"capacity_hours":48,"fields":[...],"points":[[...],...]}`, oldest first. Each point lists the values named in `fields`: `age_s`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg`, `rain_mm`, `uv_index`, `light_lux`, `rssi_dbm`. A sample is recorded only when a reading arrives, so gaps mean the station wasn't heard. The history is kept in PSRAM, or for 6 hours in internal RAM if PSRAM is missing, and is lost at every reboot.
 
 `rain_mm` is the sensor's running total since its batteries were last fitted, so work out rainfall from the difference between two readings. `battery_ok` is decoded as rtl_433 does, but rtl_433 marks the meaning of that bit as unconfirmed. A station's ID can change when its batteries are replaced; set the filter again from the `heard` list.
 
