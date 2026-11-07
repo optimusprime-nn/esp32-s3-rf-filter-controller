@@ -10,6 +10,7 @@
 #include "ownership.h"
 #include "fan.h"
 #include "temp_sensor.h"
+#include "weather.h"
 #define RADXA_RESET_GPIO GPIO_NUM_6
 extern esp_err_t config_store_init(void);
 extern esp_err_t config_store_load_port(uint8_t *port);
@@ -41,6 +42,8 @@ void app_main(void) {
     if(e!=ESP_OK) ESP_LOGE(TAG,"Fan control unavailable: %s",esp_err_to_name(e));
     e=rf_temp_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"Temperature sensors unavailable: %s",esp_err_to_name(e));
+    e=rf_weather_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"Weather receiver unavailable: %s",esp_err_to_name(e));
     /* Before anything below can return early: an unprovisioned device must still be reachable over USB. */
     e=rf_usb_console_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"USB provisioning console unavailable: %s",esp_err_to_name(e));

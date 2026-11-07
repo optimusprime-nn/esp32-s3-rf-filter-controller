@@ -34,3 +34,21 @@ GPIO8, GPIO9 and the PWM frequency can be changed in `menuconfig` under "RF cont
 
 ## Temperature sensors
 LM75-family sensors (LM75, TMP75, TMP102, PCT2075) on I2C: SDA on GPIO10 and SCL on GPIO11, both with 4.7 kΩ pull-ups to 3.3 V. The internal pull-ups are enabled but are too weak to rely on. Each sensor needs its own address in 0x48 to 0x4F, and every address must be listed in `menuconfig` under "RF controller temperature sensors" (default `0x48`). Only list addresses that hold one of these sensors. The firmware also reads the ESP32-S3's own temperature sensor.
+
+## Weather station receiver
+A CC1101 module receives the outdoor sensor of a VEVOR 7-in-1 weather station (YT60233 or YT60234 in the US on 915 MHz, YT60231 in Europe on 868 MHz). Buy a module built for that band: most cheap CC1101 boards are matched for 433 MHz and lose much of their sensitivity at 915 MHz.
+
+| CC1101 | ESP32-S3 |
+|---|---|
+| VCC | 3.3 V only. The CC1101 is not 5 V tolerant |
+| GND | GND |
+| SCK | GPIO12 |
+| SI (MOSI) | GPIO13 |
+| SO (MISO, GDO1) | GPIO14 |
+| CSn | GPIO15 |
+| GDO0 | GPIO16 |
+| GDO2 | Not connected |
+
+Pins, frequency and a station ID filter are set under "RF controller weather station receiver" in `menuconfig`. The antenna can be a quarter-wave wire, 78 mm long for 915 MHz or 82 mm for 868 MHz. If the CC1101 shares an antenna with the filter bank, select a filter path that passes the station's frequency.
+
+Radio settings: 2-FSK, 11.26 kBaud, 38 kHz deviation, 203 kHz receive bandwidth, sync word `0xCA54`, 21-byte packets. The station sends one burst every 20 seconds. The protocol comes from rtl_433's `vevor_7in1` decoder.

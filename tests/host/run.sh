@@ -16,3 +16,6 @@ gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address
 gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
     -Imain -Itests/host/stubs tests/host/test_der.c main/der_util.c -o "$out/test_der"
 "$out/test_der"
+gcc -std=gnu17 -Wall -Wextra -Werror -Wno-unused-parameter -g -fsanitize=address,undefined \
+    -Imain tests/host/test_weather.c main/weather_decode.c main/cc1101_config.c -lm -o "$out/test_weather"
+"$out/test_weather"
