@@ -25,6 +25,8 @@
 #include "provisioning.h"
 #include "temp_sensor.h"
 #include "time_service.h"
+#include "weather.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -158,6 +160,51 @@ static cJSON *fan_json(void) {
     cJSON_AddNumberToObject(o,"tach_gpio",CONFIG_RF_FAN_TACH_GPIO);
     return o;
 }
+static void station_id(char out[5], uint16_t id) { snprintf(out,5,"%04x",id); }
+static cJSON *weather_json(void) {
+    rf_weather_status_t w;
+    rf_weather_status(&w);
+    char id[5];
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddStringToObject(o,"receiver",rf_weather_receiver_name(w.receiver));
+    cJSON_AddStringToObject(o,"model","VEVOR 7-in-1");
+    if(w.receiver==RF_WEATHER_DISABLED) cJSON_AddNullToObject(o,"frequency_mhz");
+    else cJSON_AddNumberToObject(o,"frequency_mhz",w.frequency_khz/1000.0);
+    if(w.sensor_id_filter<0) cJSON_AddNullToObject(o,"station_filter");
+    else { station_id(id,(uint16_t)w.sensor_id_filter); cJSON_AddStringToObject(o,"station_filter",id); }
+    cJSON *p=cJSON_AddObjectToObject(o,"packets");
+    cJSON_AddNumberToObject(p,"ok",w.packets_ok);
+    cJSON_AddNumberToObject(p,"rejected",w.packets_rejected);
+    cJSON_AddNumberToObject(p,"ignored",w.packets_ignored);
+    cJSON *heard=cJSON_AddArrayToObject(o,"heard");
+    for(size_t i=0;i<w.heard_count;i++) {
+        cJSON *h=cJSON_CreateObject();
+        station_id(id,w.heard[i].id);
+        cJSON_AddStringToObject(h,"station",id);
+        cJSON_AddNumberToObject(h,"rssi_dbm",w.heard[i].rssi_dbm);
+        cJSON_AddNumberToObject(h,"age_s",(double)(w.heard[i].age_ms/1000));
+        cJSON_AddItemToArray(heard,h);
+    }
+    if(!w.have_reading) { cJSON_AddNullToObject(o,"reading"); return o; }
+    const rf_vevor_reading_t *r=&w.last;
+    cJSON *x=cJSON_AddObjectToObject(o,"reading");
+    station_id(id,r->id);
+    cJSON_AddStringToObject(x,"station",id);
+    cJSON_AddNumberToObject(x,"channel",r->channel);
+    cJSON_AddNumberToObject(x,"age_s",(double)(w.age_ms/1000));
+    cJSON_AddBoolToObject(x,"stale",w.age_ms>RF_WEATHER_STALE_S*1000LL);
+    cJSON_AddNumberToObject(x,"rssi_dbm",w.rssi_dbm);
+    cJSON_AddBoolToObject(x,"battery_ok",!r->battery_low);
+    cJSON_AddNumberToObject(x,"temperature_c",r->temp_dc/10.0);
+    cJSON_AddNumberToObject(x,"humidity_percent",r->humidity);
+    cJSON_AddNumberToObject(x,"wind_avg_kmh",round(rf_vevor_wind_kmh(r->wind_raw)*10)/10);
+    cJSON_AddNumberToObject(x,"wind_gust_kmh",round(rf_vevor_gust_kmh(r->gust_raw)*10)/10);
+    cJSON_AddNumberToObject(x,"wind_dir_deg",r->wind_dir_deg);
+    cJSON_AddNumberToObject(x,"rain_mm",round(rf_vevor_rain_mm(r->rain_raw)*10)/10);
+    cJSON_AddNumberToObject(x,"uv_index",r->uv_index);
+    cJSON_AddNumberToObject(x,"light_lux",r->light_lux);
+    return o;
+}
 static cJSON *temperature_json(void) {
     rf_temp_reading_t r[RF_TEMP_MAX_SENSORS];
     size_t n=rf_temp_snapshot(r,RF_TEMP_MAX_SENSORS);
@@ -278,6 +325,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(rf,"filter",rf_filter_current());
     cJSON_AddItemToObject(o,"fan",fan_json());
     cJSON_AddItemToObject(o,"temperature",temperature_json());
+    cJSON_AddItemToObject(o,"weather",weather_json());
     cJSON_AddItemToObject(o,"provisioning",provisioning_json());
     cJSON *console=cJSON_AddObjectToObject(o,"console");
     cJSON_AddStringToObject(console,"mode","mtls");
@@ -314,6 +362,27 @@ static esp_err_t fan_put(httpd_req_t *req) {
 }
 static esp_err_t temperature_get(httpd_req_t *req) {
     return send_json(req,"200 OK",temperature_json());
+}
+static esp_err_t weather_get(httpd_req_t *req) {
+    return send_json(req,"200 OK",weather_json());
+}
+static esp_err_t weather_station_put(httpd_req_t *req) {
+    cJSON *body=read_json(req,SMALL_BODY);
+    if(!body) return ESP_OK;
+    const cJSON *v=cJSON_GetObjectItemCaseSensitive(body,"station");
+    long id=-2;
+    if(cJSON_IsNull(v)) id=-1;
+    else if(cJSON_IsString(v) && strlen(v->valuestring)==4) {
+        char *end;
+        id=strtol(v->valuestring,&end,16);
+        if(*end) id=-2;
+    }
+    cJSON_Delete(body);
+    if(id<-1) return send_error(req,"400 Bad Request","station must be a 4-digit hex ID or null");
+    esp_err_t e=rf_weather_set_station((int32_t)id);
+    if(e==ESP_ERR_NOT_SUPPORTED || e==ESP_ERR_INVALID_STATE) return send_error(req,"409 Conflict","Weather receiver is not running");
+    if(e!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not save the station");
+    return send_json(req,"200 OK",weather_json());
 }
 static esp_err_t config_get(httpd_req_t *req) {
     rf_management_settings_t s;
@@ -397,7 +466,7 @@ static esp_err_t reboot_post(httpd_req_t *req) {
     return send_json(req,"202 Accepted",o);
 }
 static esp_err_t metrics_get(httpd_req_t *req) {
-    char buf[1536];
+    char buf[4096];
     size_t n=0;
     rf_temp_reading_t r[RF_TEMP_MAX_SENSORS];
     size_t count=rf_temp_snapshot(r,RF_TEMP_MAX_SENSORS);
@@ -411,6 +480,30 @@ static esp_err_t metrics_get(httpd_req_t *req) {
     for(size_t i=0;i<count;i++) if(r[i].ok) EMIT("rf_temperature_celsius{sensor=\"%s\"} %.3f\n",r[i].id,r[i].millicelsius/1000.0);
     EMIT("# TYPE rf_temperature_sensor_ok gauge\n");
     for(size_t i=0;i<count;i++) EMIT("rf_temperature_sensor_ok{sensor=\"%s\"} %d\n",r[i].id,r[i].ok?1:0);
+    rf_weather_status_t w;
+    rf_weather_status(&w);
+    if(w.receiver==RF_WEATHER_RUNNING) {
+        EMIT("# TYPE rf_weather_packets_total counter\n");
+        EMIT("rf_weather_packets_total{result=\"ok\"} %lu\n",(unsigned long)w.packets_ok);
+        EMIT("rf_weather_packets_total{result=\"rejected\"} %lu\n",(unsigned long)w.packets_rejected);
+        EMIT("rf_weather_packets_total{result=\"ignored\"} %lu\n",(unsigned long)w.packets_ignored);
+    }
+    if(w.have_reading) {
+        const rf_vevor_reading_t *r=&w.last;
+        char id[5];
+        station_id(id,r->id);
+        EMIT("# TYPE rf_weather_last_seen_seconds gauge\nrf_weather_last_seen_seconds{station=\"%s\"} %lld\n",id,(long long)(w.age_ms/1000));
+        EMIT("# TYPE rf_weather_rssi_dbm gauge\nrf_weather_rssi_dbm{station=\"%s\"} %d\n",id,w.rssi_dbm);
+        EMIT("# TYPE rf_weather_battery_ok gauge\nrf_weather_battery_ok{station=\"%s\"} %d\n",id,r->battery_low?0:1);
+        EMIT("# TYPE rf_weather_temperature_celsius gauge\nrf_weather_temperature_celsius{station=\"%s\"} %.1f\n",id,r->temp_dc/10.0);
+        EMIT("# TYPE rf_weather_humidity_percent gauge\nrf_weather_humidity_percent{station=\"%s\"} %u\n",id,(unsigned)r->humidity);
+        EMIT("# TYPE rf_weather_wind_avg_kmh gauge\nrf_weather_wind_avg_kmh{station=\"%s\"} %.2f\n",id,rf_vevor_wind_kmh(r->wind_raw));
+        EMIT("# TYPE rf_weather_wind_gust_kmh gauge\nrf_weather_wind_gust_kmh{station=\"%s\"} %.2f\n",id,rf_vevor_gust_kmh(r->gust_raw));
+        EMIT("# TYPE rf_weather_wind_direction_degrees gauge\nrf_weather_wind_direction_degrees{station=\"%s\"} %u\n",id,(unsigned)r->wind_dir_deg);
+        EMIT("# TYPE rf_weather_rain_mm_total counter\nrf_weather_rain_mm_total{station=\"%s\"} %.3f\n",id,rf_vevor_rain_mm(r->rain_raw));
+        EMIT("# TYPE rf_weather_uv_index gauge\nrf_weather_uv_index{station=\"%s\"} %d\n",id,(int)r->uv_index);
+        EMIT("# TYPE rf_weather_light_lux gauge\nrf_weather_light_lux{station=\"%s\"} %lu\n",id,(unsigned long)r->light_lux);
+    }
     EMIT("# TYPE rf_heap_internal_free_bytes gauge\nrf_heap_internal_free_bytes %u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #undef EMIT
     if(n>=sizeof(buf)) return send_error(req,"500 Internal Server Error","Metrics too large");
@@ -489,6 +582,8 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/fan",.method=HTTP_GET,.handler=fan_get},
         {.uri="/api/v1/fan",.method=HTTP_PUT,.handler=fan_put},
         {.uri="/api/v1/sensors/temperature",.method=HTTP_GET,.handler=temperature_get},
+        {.uri="/api/v1/sensors/weather",.method=HTTP_GET,.handler=weather_get},
+        {.uri="/api/v1/sensors/weather/station",.method=HTTP_PUT,.handler=weather_station_put},
         {.uri="/api/v1/config",.method=HTTP_GET,.handler=config_get},
         {.uri="/api/v1/config/hostname",.method=HTTP_PUT,.handler=hostname_put},
         {.uri="/api/v1/config/ntp",.method=HTTP_PUT,.handler=ntp_put},

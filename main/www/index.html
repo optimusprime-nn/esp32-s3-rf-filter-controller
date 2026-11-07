@@ -29,6 +29,15 @@ label{display:grid;gap:2px;color:var(--muted);font-size:13px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #msg{min-height:1.4em}
 .bad{color:var(--bad)}.ok{color:var(--ok)}
+.wide{grid-column:1/-1}
+.wx{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:10px}
+.tile{border:1px solid var(--line);border-radius:6px;padding:10px}
+.tile .k{color:var(--muted);font-size:13px}.tile .v{font-size:22px;font-variant-numeric:tabular-nums}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.badge{font-size:12px;border:1px solid currentColor;border-radius:10px;padding:0 8px}
+select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+#compass{width:44px;height:44px;vertical-align:middle;margin-right:6px}
+#compass circle{fill:none;stroke:var(--line);stroke-width:2}#compass path{fill:var(--accent)}#compass text{fill:var(--muted);font-size:9px}
 </style>
 </head>
 <body>
@@ -50,6 +59,26 @@ label{display:grid;gap:2px;color:var(--muted);font-size:13px}
 <div class="card">
 <h2>Temperature</h2>
 <table id="temps"></table>
+</div>
+<div class="card wide" id="wxCard">
+<div class="head"><h2>Weather station</h2>
+<label class="row" style="display:flex">Units <select id="units"><option value="metric">°C, km/h, mm</option><option value="imperial">°F, mph, in</option></select></label></div>
+<p id="wxState" class="muted"></p>
+<div id="wxBody" hidden>
+<div class="head"><div class="big"><span id="wxTemp">–</span> <span class="muted" style="font-size:15px" id="wxHum"></span></div><span id="wxAge" class="muted"></span></div>
+<div class="wx">
+<div class="tile"><div class="k">Wind</div><div class="v"><svg id="compass" viewBox="-22 -22 44 44" role="img" aria-label="Wind direction"><circle r="20"/><text x="0" y="-12" text-anchor="middle">N</text><path id="arrow" d="M0,-16 L5,6 L0,2 L-5,6 Z"/></svg><span id="wxWind">–</span></div><div class="muted" id="wxGust"></div></div>
+<div class="tile"><div class="k">Rain since sensor power-up</div><div class="v" id="wxRain">–</div></div>
+<div class="tile"><div class="k">UV index</div><div class="v" id="wxUv">–</div></div>
+<div class="tile"><div class="k">Light</div><div class="v" id="wxLux">–</div></div>
+<div class="tile"><div class="k">Signal</div><div class="v" id="wxRssi">–</div><div class="muted" id="wxBatt"></div></div>
+</div>
+</div>
+<div class="wx">
+<div><h2 style="margin-top:6px">Stations heard</h2><table id="wxHeard"></table>
+<div class="row" style="margin-top:8px"><span id="wxFilter" class="muted"></span><button id="wxAny" hidden>Accept any station</button></div></div>
+<div><h2 style="margin-top:6px">Receiver</h2><table id="wxRx"></table></div>
+</div>
 </div>
 <div class="card">
 <h2>Device</h2>
@@ -106,7 +135,54 @@ function render(s){
   const d=$('device');d.textContent='';
   row(d,'Hostname',s.device.hostname);row(d,'IPv4',s.device.ipv4||'none');row(d,'Firmware',s.device.firmware);
   row(d,'Uptime',Math.floor(s.system.uptime_ms/1000)+' s');row(d,'Time',s.time.synchronized?new Date(s.time.unix_time*1000).toISOString().replace('.000',''):'not synchronised');
+  renderWeather(s.weather);
   row(d,'Last reset',s.system.reset_reason);row(d,'Server certificate',s.console.server_certificate);row(d,'Free internal heap',s.system.heap_internal_free+' bytes');
+}
+const DIRS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+let units='metric';
+try{units=localStorage.getItem('units')||'metric'}catch(e){}
+$('units').value=units;
+$('units').onchange=()=>{units=$('units').value;try{localStorage.setItem('units',units)}catch(e){};refresh()};
+function ago(s){return s<90?s+' s ago':s<5400?Math.round(s/60)+' min ago':Math.round(s/3600)+' h ago'}
+function useStation(id){api('PUT','/api/v1/sensors/weather/station',{station:id}).then(()=>{msg(id?'Accepting only station '+id:'Accepting any station');refresh()}).catch(e=>msg(e.message,true))}
+$('wxAny').onclick=()=>useStation(null);
+function renderWeather(w){
+  const imp=units==='imperial';
+  if(w.receiver!=='running'){
+    $('wxState').textContent=w.receiver==='disabled'?'Weather receiver turned off in menuconfig.':'No CC1101 found. Check its wiring and power, then reboot.';
+    $('wxBody').hidden=true;$('wxHeard').textContent='';$('wxRx').textContent='';$('wxAny').hidden=true;$('wxFilter').textContent='';return;
+  }
+  const r=w.reading;
+  $('wxBody').hidden=!r;
+  $('wxState').textContent=r?'':'Listening on '+w.frequency_mhz.toFixed(3)+' MHz. The station sends every 20 seconds.';
+  if(r){
+    $('wxTemp').textContent=imp?(r.temperature_c*9/5+32).toFixed(1)+' °F':r.temperature_c.toFixed(1)+' °C';
+    $('wxHum').textContent=r.humidity_percent+'% humidity';
+    const age=$('wxAge');age.textContent='Station '+r.station+', '+ago(r.age_s)+(r.stale?' (stale)':'');age.className=r.stale?'bad':'muted';
+    const sp=v=>imp?(v/1.609344).toFixed(1)+' mph':v.toFixed(1)+' km/h';
+    $('wxWind').textContent=sp(r.wind_avg_kmh);
+    $('wxGust').textContent='Gust '+sp(r.wind_gust_kmh)+', from '+DIRS[Math.round(r.wind_dir_deg/22.5)%16]+' ('+r.wind_dir_deg+'°)';
+    $('arrow').setAttribute('transform','rotate('+((r.wind_dir_deg+180)%360)+')');
+    $('compass').setAttribute('aria-label','Wind from '+r.wind_dir_deg+' degrees');
+    $('wxRain').textContent=imp?(r.rain_mm/25.4).toFixed(2)+' in':r.rain_mm.toFixed(1)+' mm';
+    $('wxUv').textContent=r.uv_index;
+    $('wxLux').textContent=r.light_lux.toLocaleString()+' lux';
+    $('wxRssi').textContent=r.rssi_dbm+' dBm';
+    const b=$('wxBatt');b.textContent='Battery '+(r.battery_ok?'ok':'low');b.className=r.battery_ok?'muted':'bad';
+  }
+  const h=$('wxHeard');h.textContent='';
+  if(!w.heard.length)row(h,'None yet','');
+  for(const x of w.heard){
+    const tr=h.insertRow();tr.insertCell().textContent=x.station;tr.insertCell().textContent=x.rssi_dbm+' dBm, '+ago(x.age_s);
+    const c=tr.insertCell();
+    if(w.station_filter===x.station)c.textContent='accepted';
+    else{const b=document.createElement('button');b.textContent='Use only this';b.onclick=()=>useStation(x.station);c.appendChild(b)}
+  }
+  $('wxFilter').textContent=w.station_filter?'Accepting only station '+w.station_filter+'.':'Accepting any station.';
+  $('wxAny').hidden=!w.station_filter;
+  const rx=$('wxRx');rx.textContent='';
+  row(rx,'Frequency',w.frequency_mhz.toFixed(3)+' MHz');row(rx,'Readings',w.packets.ok);
+  row(rx,'From other stations',w.packets.ignored);row(rx,'Rejected (noise or errors)',w.packets.rejected);
 }
 let busy=false;
 async function refresh(){if(busy)return;busy=true;try{render(await api('GET','/api/v1/status'))}catch(e){msg(e.message,true)}finally{busy=false}}

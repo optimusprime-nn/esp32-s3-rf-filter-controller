@@ -62,3 +62,72 @@ menu "RF controller temperature sensors"
             read as a temperature.
 
 endmenu
+
+menu "RF controller weather station receiver"
+
+    config RF_WEATHER_ENABLE
+        bool "Receive a VEVOR 7-in-1 weather station with a CC1101"
+        default y
+        help
+            Receives the outdoor sensor of a VEVOR 7-in-1 weather station
+            (YT60231, YT60233, YT60234) through a CC1101 on SPI. Without a
+            CC1101 fitted the firmware reports the receiver as missing.
+
+    config RF_WEATHER_FREQ_KHZ
+        int "Receive frequency (kHz)"
+        depends on RF_WEATHER_ENABLE
+        range 779000 928000
+        default 915000
+        help
+            915000 for US models (YT60233, YT60234), 868300 for EU models
+            (YT60231). Use a CC1101 module built for this band.
+
+    config RF_WEATHER_SENSOR_ID
+        int "Station ID to accept (-1 for any)"
+        depends on RF_WEATHER_ENABLE
+        range -1 65535
+        default -1
+        help
+            The outdoor sensor's 16-bit ID, shown by the console's "weather"
+            command and the API. Set it to ignore neighbours' stations. The ID
+            may change when the sensor's batteries are replaced.
+
+    config RF_WEATHER_INVERT
+        bool "Invert the FSK data"
+        depends on RF_WEATHER_ENABLE
+        default n
+        help
+            Turn this on only if the station is close by but every packet is
+            missed: some receivers see the two FSK tones the other way round.
+
+    config RF_WEATHER_SCK_GPIO
+        int "CC1101 SCK GPIO"
+        depends on RF_WEATHER_ENABLE
+        range 0 48
+        default 12
+
+    config RF_WEATHER_MOSI_GPIO
+        int "CC1101 MOSI (SI) GPIO"
+        depends on RF_WEATHER_ENABLE
+        range 0 48
+        default 13
+
+    config RF_WEATHER_MISO_GPIO
+        int "CC1101 MISO (SO) GPIO"
+        depends on RF_WEATHER_ENABLE
+        range 0 48
+        default 14
+
+    config RF_WEATHER_CS_GPIO
+        int "CC1101 CSn GPIO"
+        depends on RF_WEATHER_ENABLE
+        range 0 48
+        default 15
+
+    config RF_WEATHER_GDO0_GPIO
+        int "CC1101 GDO0 GPIO"
+        depends on RF_WEATHER_ENABLE
+        range 0 48
+        default 16
+
+endmenu

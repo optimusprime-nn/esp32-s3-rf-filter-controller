@@ -5,6 +5,7 @@
 #include "ownership.h"
 #include "bootstrap_tls.h"
 #include "temp_sensor.h"
+#include "weather.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -119,6 +120,45 @@ static void show_temps(void) {
         put(line);
     }
 }
+static void show_weather(void) {
+    rf_weather_status_t w;
+    rf_weather_status(&w);
+    char line[128];
+    if(w.receiver!=RF_WEATHER_RUNNING) {
+        snprintf(line,sizeof(line),"Weather: receiver %s\r\n",rf_weather_receiver_name(w.receiver));
+        put(line);
+        return;
+    }
+    if(w.sensor_id_filter<0) snprintf(line,sizeof(line),"Weather: %lu.%03lu MHz, any station, %lu readings, %lu rejected, %lu ignored\r\n",
+        (unsigned long)(w.frequency_khz/1000),(unsigned long)(w.frequency_khz%1000),(unsigned long)w.packets_ok,(unsigned long)w.packets_rejected,(unsigned long)w.packets_ignored);
+    else snprintf(line,sizeof(line),"Weather: %lu.%03lu MHz, station %04lx only, %lu readings, %lu rejected, %lu ignored\r\n",
+        (unsigned long)(w.frequency_khz/1000),(unsigned long)(w.frequency_khz%1000),(unsigned long)w.sensor_id_filter,(unsigned long)w.packets_ok,(unsigned long)w.packets_rejected,(unsigned long)w.packets_ignored);
+    put(line);
+    for(size_t i=0;i<w.heard_count;i++) {
+        snprintf(line,sizeof(line),"Heard station %04x: %d dBm, %lld s ago\r\n",w.heard[i].id,w.heard[i].rssi_dbm,(long long)(w.heard[i].age_ms/1000));
+        put(line);
+    }
+    if(!w.have_reading) { put("No reading yet; the station sends every 20 s\r\n"); return; }
+    const rf_vevor_reading_t *r=&w.last;
+    snprintf(line,sizeof(line),"Station %04x, %lld s ago, %d dBm, battery %s\r\n",r->id,(long long)(w.age_ms/1000),w.rssi_dbm,r->battery_low?"low":"ok");
+    put(line);
+    snprintf(line,sizeof(line),"%s%d.%d C, %u%% humidity, UV %d, %lu lux\r\n",r->temp_dc<0?"-":"",abs(r->temp_dc)/10,abs(r->temp_dc)%10,
+        (unsigned)r->humidity,(int)r->uv_index,(unsigned long)r->light_lux);
+    put(line);
+    snprintf(line,sizeof(line),"Wind %.1f km/h, gust %.1f km/h, from %u deg; rain %.1f mm\r\n",
+        rf_vevor_wind_kmh(r->wind_raw),rf_vevor_gust_kmh(r->gust_raw),(unsigned)r->wind_dir_deg,rf_vevor_rain_mm(r->rain_raw));
+    put(line);
+}
+static void set_station(const char *arg) {
+    long id;
+    char *end;
+    if(!strcmp(arg,"any")) id=-1;
+    else { id=strtol(arg,&end,16); if(strlen(arg)!=4 || *end) { put("ERROR: give a 4-digit hex station ID, or any\r\n"); return; } }
+    esp_err_t e=rf_weather_set_station((int32_t)id);
+    if(e==ESP_OK) show_weather();
+    else if(e==ESP_ERR_NOT_SUPPORTED || e==ESP_ERR_INVALID_STATE) put("ERROR: weather receiver is not running\r\n");
+    else { put("ERROR: "); put(esp_err_to_name(e)); put("\r\n"); }
+}
 static void show_enrollment(void) {
     char hex[65];
     if(rf_ownership_claimed()) { put("Already claimed. Management needs a client certificate from your management CA.\r\n"); return; }
@@ -134,6 +174,7 @@ static void show_status(void) {
     show_filter();
     show_fan();
     show_temps();
+    show_weather();
     put("IPv4 address: "); put(rf_network_get_ip(ip,sizeof(ip))==ESP_OK?ip:"none"); put("\r\n");
     put("Wi-Fi credentials: "); put(s.wifi?"provisioned\r\n":"missing\r\n");
     put("Management: "); put(rf_ownership_claimed()?"claimed (mTLS)\r\n":"unclaimed; run enrollment\r\n");
@@ -149,11 +190,13 @@ static void console_task(void *arg) {
         else if(!strncmp(cmd,"filter ",7)) select_port(cmd+7);
         else if(!strcmp(cmd,"fan")) show_fan();
         else if(!strcmp(cmd,"temps")) show_temps();
+        else if(!strcmp(cmd,"weather")) show_weather();
+        else if(!strncmp(cmd,"weather-station ",16)) set_station(cmd+16);
         else if(!strncmp(cmd,"fan ",4)) set_fan(cmd+4);
         else if(!strcmp(cmd,"set-wifi")) set_wifi();
         else if(!strcmp(cmd,"enrollment")) show_enrollment();
         else if(!strcmp(cmd,"set-tls")) set_tls();
-        else put("Commands: status, filter [1-4], fan [0-100], temps, enrollment, set-wifi, set-tls. Ctrl-C cancels.\r\n");
+        else put("Commands: status, filter [1-4], fan [0-100], temps, weather, weather-station <id|any>, enrollment, set-wifi, set-tls. Ctrl-C cancels.\r\n");
     }
 }
 esp_err_t rf_usb_console_start(void) {

@@ -81,6 +81,7 @@ To use the dashboard in a browser, import your client certificate (for example `
 | `time` | `synchronized`, `unix_time`, `ntp_server` |
 | `rf` | `filter` (1 to 4) |
 | `fan` | `percent`, `rpm` (`null` without a tachometer), `pwm_gpio`, `tach_gpio` (`-1` for none) |
+| `weather` | As `GET /api/v1/sensors/weather` |
 | `temperature` | `sensors`: a list of `{"id","source","address","ok","celsius"}`. `address` is `null` and `source` is `internal` for the ESP32-S3's own sensor; I2C sensors have `source` `lm75` and their 7-bit address. `celsius` is `null` while `ok` is `false` |
 | `provisioning` | `wifi` and `tls` (each `true` once stored), `management_claimed` |
 | `console` | `mode` (`mtls`), `server_certificate` (`bootstrap` or `provisioned`) |
@@ -106,6 +107,26 @@ The tachometer is sampled once a second. Some fans don't stop at 0%.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/v1/sensors/temperature` | Same as the status `temperature` section. Sensors are read every 2 seconds |
+
+## Weather station
+
+A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARDWARE.md](HARDWARE.md#weather-station-receiver).
+
+| Method | Path | Purpose | Body |
+|---|---|---|---|
+| GET | `/api/v1/sensors/weather` | The latest reading and the receiver's state | |
+| PUT | `/api/v1/sensors/weather/station` | Accept only this station, or any with `null`. Saved for the next boot. `409` if the receiver isn't running | `{"station":"f8f7"}` |
+
+| Field | Meaning |
+|---|---|
+| `receiver` | `running`, `missing` (no CC1101 answered at boot) or `disabled` (turned off in `menuconfig`) |
+| `frequency_mhz` | Receive frequency |
+| `station_filter` | The only station accepted, or `null` for any |
+| `packets` | `ok` (new readings), `rejected` (failed checks, including noise that looks like a packet, so this grows slowly on its own) and `ignored` (other stations) |
+| `heard` | Up to four stations heard recently, accepted or not: `station`, `rssi_dbm`, `age_s` |
+| `reading` | `null` until the first packet, otherwise `station`, `channel`, `age_s`, `stale` (no packet for 90 s), `rssi_dbm`, `battery_ok`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg` (where the wind comes from), `rain_mm`, `uv_index`, `light_lux` |
+
+`rain_mm` is the sensor's running total since its batteries were last fitted, so work out rainfall from the difference between two readings. `battery_ok` is decoded as rtl_433 does, but rtl_433 marks the meaning of that bit as unconfirmed. A station's ID can change when its batteries are replaced; set the filter again from the `heard` list.
 
 ## Configuration
 
@@ -141,6 +162,12 @@ The ACME certificate engine isn't implemented, so `acme` is read-only.
 | `rf_fan_rpm` | gauge | Absent without a tachometer |
 | `rf_temperature_celsius` | gauge | `sensor`, for each sensor reading `ok` |
 | `rf_temperature_sensor_ok` | gauge | `sensor` |
+| `rf_weather_packets_total` | counter | `result`: `ok`, `rejected` or `ignored`. Only while the receiver runs |
+| `rf_weather_last_seen_seconds`, `rf_weather_rssi_dbm`, `rf_weather_battery_ok` | gauge | `station`. These and the weather metrics below appear once a reading has arrived |
+| `rf_weather_temperature_celsius`, `rf_weather_humidity_percent` | gauge | `station` |
+| `rf_weather_wind_avg_kmh`, `rf_weather_wind_gust_kmh`, `rf_weather_wind_direction_degrees` | gauge | `station` |
+| `rf_weather_rain_mm_total` | counter | `station`. Resets when the sensor loses power |
+| `rf_weather_uv_index`, `rf_weather_light_lux` | gauge | `station` |
 | `rf_heap_internal_free_bytes` | gauge | |
 
 ## Examples
@@ -161,6 +188,8 @@ C="--cert admin-client.crt.pem --key admin-client.key.pem --pass $KEYPASS"
 curl -sk $C $B/api/v1/status
 curl -sk $C -X PUT -H "$J" -d '{"filter":3}' $B/api/v1/rf/filter
 curl -sk $C -X PUT -H "$J" -d '{"percent":60}' $B/api/v1/fan
+curl -sk $C $B/api/v1/sensors/weather
+curl -sk $C -X PUT -H "$J" -d '{"station":"f8f7"}' $B/api/v1/sensors/weather/station
 curl -sk $C -X POST -H 'X-Confirm-Reboot: REBOOT' $B/api/v1/system/reboot
 ```
 

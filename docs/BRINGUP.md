@@ -102,5 +102,19 @@ Wire them as in [HARDWARE.md](HARDWARE.md#fan). With no fan connected, `status` 
 | `temps` with an LM75-family sensor at `0x48` | `internal` and `i2c-0x48` both show plausible readings |
 | Unplug the I2C sensor, then `temps` | `i2c-0x48: not responding`; reconnecting restores readings |
 
+## 8. Check the weather station receiver
+Wire the CC1101 as in [HARDWARE.md](HARDWARE.md#weather-station-receiver). Without one, the log shows `No CC1101 found` and `weather` shows `receiver missing`, which is expected.
+
+| Check | Expected |
+|---|---|
+| Boot log | `CC1101 version 0x14 listening on 915.000 MHz` (the version may be `0x04`) |
+| Put the station's outdoor sensor within a few metres, fit its batteries, wait 30 seconds, then `weather` | The station's ID under `Heard station`, and a reading that matches the station's own display |
+| `weather` again a minute later | `readings` has gone up by about 3 |
+| The dashboard's weather panel | Updates within 20 seconds of each transmission; wind arrow points where the wind is blowing to |
+| `weather-station <id>` with the ID from `weather`, then reset and `weather` | `station <id> only`, kept after the reset |
+| `weather-station any` | Back to accepting any station |
+
+If nothing is heard after a few minutes with the sensor close by, check the module's band and the antenna first. Then turn on "Invert the FSK data" in `menuconfig`, rebuild and flash, and try again. Tell me which setting worked, so the default can be fixed.
+
 ## Report back
-Send me anything that failed, with the serial log. Also note how long the first boot takes to print the bootstrap fingerprint, since it generates a key, and the fan's RPM at 100% next to its rated speed. If prompts and log lines get mixed up on the USB console, tell me that too.
+Send me anything that failed, with the serial log. Also note how long the first boot takes to print the bootstrap fingerprint, since it generates a key, and the fan's RPM at 100% next to its rated speed, and the weather station's RSSI and distance. If prompts and log lines get mixed up on the USB console, tell me that too.
