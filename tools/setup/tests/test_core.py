@@ -233,7 +233,7 @@ class FakeBoard:
                 if self.path == "/api/v1/system/reboot":
                     ok = self.headers.get("X-Confirm-Reboot") == "REBOOT"
                     return self._reply(202 if ok else 412)
-                self._reply(404)
+                self._reply(202 if self.path == "/api/v1/acme/issue" else 404)
 
             def do_GET(self):
                 self._record("GET")
@@ -325,6 +325,52 @@ class PinnedConnections(unittest.TestCase):
             ("POST", "/api/v1/system/reboot", None),
         ])
         self.assertEqual(server.received[-1][2]["X-Confirm-Reboot"], "REBOOT")
+
+
+class CertificateCalls(unittest.TestCase):
+    setUp, tearDown = PinnedConnections.setUp, PinnedConnections.tearDown
+    _board, _server = PinnedConnections._board, PinnedConnections._server
+
+    def test_acme_payloads(self):
+        server = self._server()
+        board = self._board(server, pin=self.fingerprint)
+        board.set_fqdn("rf1.example.com")
+        board.set_cloudflare("tok", "example.com")
+        board.issue_certificate(False)
+        sent = [(m, p, json.loads(b) if b else None) for m, p, h, b in server.received]
+        self.assertEqual(sent, [
+            ("PUT", "/api/v1/config/hostname", {"fqdn": "rf1.example.com"}),
+            ("PUT", "/api/v1/config/cloudflare", {"api_token": "tok", "zone_name": "example.com"}),
+            ("POST", "/api/v1/acme/issue", {"production": False}),
+        ])
+
+    def test_name_checked_when_not_pinning(self):
+        # Without a pin the certificate must chain to a public root and match the name,
+        # so a self-signed one is refused.
+        server = self._server()
+        with self.assertRaises(ssl.SSLError):
+            self._board(server, tls_name="rf1.example.com").status()
+
+    def test_board_needs_pin_or_name(self):
+        with self.assertRaises(ValueError):
+            Board("192.0.2.1")
+
+
+class CloudflareStep(unittest.TestCase):
+    def test_name_must_be_in_zone(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = flow.Session(log=lambda m: None)
+            s.new_credentials(d, "correct horse")
+            s.board = Board("192.0.2.10", pin=FP)
+            with self.assertRaisesRegex(SetupError, "not inside the zone"):
+                s.cloudflare("rf1.example.com", "tok", "example.org", False)
+            with self.assertRaisesRegex(SetupError, "full DNS name"):
+                s.cloudflare("rf1", "tok", "example.com", False)
+
+    def test_fqdn_validation(self):
+        self.assertTrue(core.valid_fqdn("rf1.example.com"))
+        self.assertFalse(core.valid_fqdn("rf1"))
+        self.assertFalse(core.valid_fqdn("RF1.example.com"))
 
 
 class Firmware(unittest.TestCase):

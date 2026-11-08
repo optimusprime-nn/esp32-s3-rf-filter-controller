@@ -15,7 +15,7 @@ from .core import SetupError
 
 BOLD = "\033[1m" if sys.stdout.isatty() and os.name != "nt" else ""
 RESET = "\033[0m" if BOLD else ""
-TOTAL = 8
+TOTAL = 10
 
 
 def say(text: str = "") -> None:
@@ -73,7 +73,7 @@ def run(firmware_dir: str | None = None) -> int:
     s = flow.Session(log=lambda m: say("  " + m))
     say("RF filter controller setup")
     say("==========================")
-    say("This sets up one controller: firmware, Wi-Fi, ownership, name and network.")
+    say("This sets up one controller: firmware, Wi-Fi, ownership, name, network and its certificate.")
     say("Have ready: the board on USB (its native USB port), and your Wi-Fi name and password.")
 
     try:
@@ -176,8 +176,33 @@ def run(firmware_dir: str | None = None) -> int:
         else:
             s.network(False)
 
-        # 8 -- finish ---------------------------------------------------------------
-        heading(8, "Finish")
+        # 8 -- DNS and Cloudflare -----------------------------------------------------
+        heading(8, "DNS and Cloudflare")
+        say("A Let's Encrypt certificate lets browsers trust the board by name. It needs a")
+        say("domain on Cloudflare and an API token with Zone:Read and DNS:Edit on it.")
+        want_cert = yes("Set up a Let's Encrypt certificate?", default=True)
+        if want_cert:
+            fqdn0, zone0 = s.current_fqdn()
+            fqdn = ask("Full DNS name for the board", fqdn0 or f"{hostname}.example.com",
+                       lambda a: core.valid_fqdn(a.lower()), "Enter a full name, for example rf1.example.com.").lower()
+            zone = ask("Cloudflare zone (your domain)", zone0 or fqdn.split(".", 1)[1],
+                       lambda a: core.valid_fqdn(a.lower())).lower()
+            token = secret("Cloudflare API token (input is hidden)")
+            create = yes(f"Create or update the DNS record {fqdn} -> {s.board.host} for you?", default=True)
+            s.cloudflare(fqdn, token, zone, create)
+            token = ""
+
+            # 9 -- certificate ----------------------------------------------------------
+            heading(9, "Let's Encrypt")
+            if yes("Try Let's Encrypt staging first (untrusted test certificate, checks the setup)?", default=False):
+                s.certificate(production=False)
+            s.certificate(production=True)
+        else:
+            heading(9, "Let's Encrypt")
+            say("  Skipped. The board keeps its own certificate; browsers warn about it.")
+
+        # 10 -- finish ---------------------------------------------------------------
+        heading(10, "Finish")
         do_import = s.can_import() and yes(
             "Install the administrator certificate in Windows so your browser can open the console?",
             default=True)

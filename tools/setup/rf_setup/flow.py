@@ -11,7 +11,9 @@ order, so the CLI and the window cannot drift apart.
     5. claim        (skipped if the board is already claimed)
     6. identity     (hostname and the two NTP servers)
     7. network      (keep DHCP, or a static address; restarts the board to apply)
-    8. finish       (optional certificate import, saved notes)
+    8. dns          (certificate name, Cloudflare token checked on the board, optional A record)
+    9. certificate  (Let's Encrypt; the board switches HTTPS to it, checked by name)
+   10. finish       (optional certificate import, saved notes)
 """
 
 from __future__ import annotations
@@ -118,6 +120,7 @@ class Session:
             raise SetupError(f"{exc} If this board was claimed with a different management CA, go back "
                              "and open that CA's credentials folder instead.") from exc
         self.config = self.board.config()
+        self.config["acme"] = self.board.acme()
         self.record = SetupRecord(hostname=self.config.get("hostname", ""), ip=self.info.ip,
                                   fingerprint=self.info.fingerprint, firmware=self.info.version or "",
                                   static_ip=not self.config.get("network", {}).get("dhcp", True))
@@ -186,6 +189,90 @@ class Session:
                  ". Reserve this address on your router so it doesn't change."))
 
     # 8 ---------------------------------------------------------------------
+    def current_fqdn(self) -> tuple[str, str]:
+        """(certificate name, Cloudflare zone) stored on the board, to prefill."""
+        cfg = self.config or {}
+        fqdn = cfg.get("fqdn") or ""
+        if fqdn.endswith(".local"):
+            fqdn = ""
+        zone = (cfg.get("acme") or {}).get("cloudflare_zone") or (fqdn.split(".", 1)[1] if "." in fqdn else "")
+        return fqdn, zone
+
+    def cloudflare(self, fqdn: str, token: str, zone_name: str, create_dns: bool) -> None:
+        board = self._board()
+        fqdn = fqdn.strip().rstrip(".").lower()
+        zone_name = zone_name.strip().rstrip(".").lower()
+        if not core.valid_fqdn(fqdn):
+            raise SetupError("The certificate name must be a full DNS name, for example rf1.example.com.")
+        if not (fqdn == zone_name or fqdn.endswith("." + zone_name)):
+            raise SetupError(f"{fqdn} is not inside the zone {zone_name}.")
+        zone_id = core.cloudflare_zone_id(token, zone_name)
+        self.log(f"Found zone {zone_name}.")
+        if create_dns:
+            core.cloudflare_set_a_record(token, zone_id, fqdn, board.host, self.log)
+        board.set_fqdn(fqdn)
+        self.log("Saving the token on the board (it checks it with Cloudflare first)...")
+        board.set_cloudflare(token, zone_name)
+        rec = self._rec()
+        rec.fqdn = fqdn
+        rec.save(self._creds().folder)
+        self.log("Cloudflare is set up on the board.")
+
+    # 9 ---------------------------------------------------------------------
+    def certificate(self, production: bool = True, timeout: float = 600.0) -> dict:
+        """Ask the board for its certificate, wait for it, and switch to checking it."""
+        board = self._board()
+        rec = self._rec()
+        if not rec.fqdn:
+            raise SetupError("Set the certificate name and Cloudflare token first.")
+        current = board.acme().get("certificate", {})
+        if (production and current.get("present") and current.get("serving") and current.get("source") == "letsencrypt"
+                and current.get("hostname") == rec.fqdn and (current.get("days_left") or 0) > 30):
+            self.log(f"The board already has a certificate for {rec.fqdn}; keeping it.")
+        else:
+            board.issue_certificate(production)
+            self.log("Requesting the certificate. This usually takes 1 to 3 minutes...")
+            deadline = time.monotonic() + timeout
+            last_stage = ""
+            while True:
+                if time.monotonic() > deadline:
+                    raise SetupError(f"The certificate didn't arrive within {int(timeout)} s.")
+                time.sleep(5)
+                try:
+                    req = board.acme().get("request", {})
+                except (SetupError, OSError) as exc:
+                    # HTTPS restarts on the new certificate, so the pinned fingerprint stops matching.
+                    if "does not match" in str(exc) or isinstance(exc, OSError):
+                        info = core.query_board(self.port)
+                        if info.fingerprint and info.fingerprint != board.pin:
+                            board.pin = info.fingerprint
+                            self.log("The board switched HTTPS to the new certificate.")
+                        continue
+                    raise
+                if req.get("stage") != last_stage:
+                    last_stage = req.get("stage", "")
+                    self.log(f"  {last_stage}")
+                if req.get("state") == "failed":
+                    raise SetupError("The board couldn't get the certificate: " + (req.get("error") or "unknown error"))
+                if req.get("state") == "done":
+                    break
+        info = core.query_board(self.port)
+        if info.fingerprint:
+            board.pin = info.fingerprint
+        cert = board.acme().get("certificate", {})
+        if not cert.get("serving"):
+            raise SetupError("The board stored the certificate but isn't serving it. Restart it and run setup again.")
+        if production:
+            # The way a browser would: by name, trusting only public roots.
+            Board(board.host, credentials=self._creds(), tls_name=rec.fqdn).status()
+            self.log(f"Checked: {rec.fqdn} serves a publicly trusted certificate.")
+        rec.fingerprint = board.pin
+        rec.certificate = production
+        rec.save(self._creds().folder)
+        self.log(f"Certificate for {cert.get('hostname')}, valid to {cert.get('valid_to', '?')}.")
+        return cert
+
+    # 10 --------------------------------------------------------------------
     def can_import(self) -> bool:
         c = self._creds()
         return os.name == "nt" and bool(c.password) and c.p12.is_file()
@@ -199,7 +286,7 @@ class Session:
             notes.append(f"Administrator certificate thumbprint: {thumb}")
         path = rec.save(creds.folder)
         notes += [
-            f"Console: https://{rec.ip}/",
+            f"Console: https://{rec.fqdn if rec.certificate else rec.ip}/",
             f"Certificate fingerprint: {rec.fingerprint}",
             f"Credentials: {creds.folder}",
             f"Board notes: {path.name}",
@@ -213,15 +300,16 @@ class Session:
         certificate, as (heading, numbered steps). Shown at the end of setup."""
         creds = self._creds()
         admin, ca = creds.names()
-        url = f"https://{self._rec().ip}/"
+        url = f"https://{self._rec().fqdn if self._rec().certificate else self._rec().ip}/"
         open_steps = [
             f"Open {url}",
-            "The browser warns that the connection isn't private, because the board uses its own "
-            f"certificate. Check its SHA-256 fingerprint starts {self._rec().fingerprint[:16]}, then continue.",
             f"When the browser asks you to choose a certificate, pick {admin} (issued by {ca}) and click OK.",
             "If you get a connection error instead of that question, close every window of the "
             "browser and open it again: browsers remember a 'no certificate' choice.",
         ]
+        if not self._rec().certificate:
+            open_steps.insert(1, "The browser warns that the connection isn't private, because the board uses its own "
+                              f"certificate. Check its SHA-256 fingerprint starts {self._rec().fingerprint[:16]}, then continue.")
         p12_note = ("Enter the password you chose in setup." if creds.password else
                     "Enter the password that protects that .p12 file.")
         sections: list[tuple[str, list[str]]] = []

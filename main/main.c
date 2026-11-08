@@ -13,6 +13,7 @@
 #include "weather.h"
 #include "sdr_power.h"
 #include "ota.h"
+#include "acme.h"
 extern esp_err_t config_store_init(void);
 extern esp_err_t config_store_load_port(uint8_t *port);
 extern esp_err_t network_start(const rf_management_settings_t *settings);
@@ -41,6 +42,9 @@ void app_main(void) {
        HTTPS up is still rolled back. */
     e=rf_ota_start_soak(web_started);
     if(e!=ESP_OK) ESP_LOGE(TAG,"OTA verification unavailable: %s",esp_err_to_name(e));
+    /* Before HTTPS: the status calls read its state. Renewal waits for the network itself. */
+    e=rf_acme_start();
+    if(e!=ESP_OK) ESP_LOGE(TAG,"Certificate renewal unavailable: %s",esp_err_to_name(e));
     /* Prints the enrollment code on an unclaimed board, for the setup tool to read. */
     e=rf_ownership_init();
     if(e!=ESP_OK) ESP_LOGE(TAG,"Management ownership state unreadable: %s",esp_err_to_name(e));

@@ -140,7 +140,7 @@ The history is `{"interval_s":60,"capacity_hours":48,"fields":[...],"points":[[.
 | Method | Path | Purpose | Body |
 |---|---|---|---|
 | GET | `/api/v1/config` | `hostname`, `fqdn`, `ntp_servers`, `network` (`dhcp`, `address`, `netmask`, `gateway`, `dns`), `acme` (`enabled`, `cloudflare_zone`) and `provisioning` (as in status). Never returns secrets | |
-| PUT | `/api/v1/config/hostname` | Set the hostname. Applies at the next reboot | `{"hostname":"rf"}` |
+| PUT | `/api/v1/config/hostname` | Set the hostname, the certificate name (`fqdn`), or both. The hostname applies at the next reboot; `fqdn` is used by the next certificate request | `{"hostname":"rf","fqdn":"rf.example.com"}` |
 | PUT | `/api/v1/config/ntp` | Set both NTP servers; both are required. The controller polls them and uses the first that answers. Applies at the next reboot. Defaults: `time.cloudflare.com` and `time.google.com`, as on the time server | `{"servers":["time.cloudflare.com","time.google.com"]}` |
 | PUT | `/api/v1/config/network` | DHCP or static IPv4. Applies at the next reboot. With `"dhcp":true` the other fields are ignored | `{"dhcp":false,"address":"192.0.2.10","netmask":"255.255.255.0","gateway":"192.0.2.1","dns":"192.0.2.1"}` |
 | PUT | `/api/v1/config/wifi` | Store Wi-Fi credentials. `200` `{"stored":true,"reboot_required":true}` | `{"ssid":"...","password":"..."}` |
@@ -149,7 +149,24 @@ The history is `{"interval_s":60,"capacity_hours":48,"fields":[...],"points":[[.
 
 The hostname, NTP and network calls answer with the same JSON as `GET /api/v1/config`. Every configuration call answers `400` with a reason when a value is invalid, and stores nothing in that case.
 
-The ACME certificate engine isn't implemented, so `acme` is read-only.
+`acme` in the configuration shows whether automatic renewal is on and which Cloudflare zone is set. Use the calls below to change them.
+
+## Certificate (Let's Encrypt)
+
+Works as on esp32p4_nts_time_server. The controller gets a Let's Encrypt certificate for its `fqdn` by DNS-01: it adds a `_acme-challenge` TXT record in your Cloudflare zone, lets Let's Encrypt check it, and deletes it. The controller doesn't need to be reachable from the internet. The certificate and its key go into the same store as `PUT /api/v1/config/tls`, and HTTPS switches to it straight away without a reboot.
+
+| Method | Path | Purpose | Body |
+|---|---|---|---|
+| PUT | `/api/v1/config/cloudflare` | Store a Cloudflare API token for a zone. The controller checks with Cloudflare that the token can see the zone, from its own network, before storing anything. `502` when Cloudflare refuses. Answers like `GET /api/v1/acme`. The token needs Zone:Read and DNS:Edit on the zone, and is never returned | `{"api_token":"...","zone_name":"example.com"}` |
+| DELETE | `/api/v1/config/cloudflare` | Forget the token. Automatic renewal stops | |
+| GET | `/api/v1/acme` | `fqdn`, `cloudflare_zone`, `cloudflare_token_present`, `automatic_renewal`, `clock_synchronized`; `request` (`state` `idle`, `running`, `done` or `failed`, `environment`, `stage`, `error`, `started`, `finished`); `certificate` (`present`, `serving`, and when present `source` `letsencrypt`, `letsencrypt-staging` or `manual`, `hostname`, `hostname_matches`, `issuer`, `valid_from`, `valid_to`, `days_left`, `sha256`). Also in the status `acme` section | |
+| POST | `/api/v1/acme/issue` | Request a certificate in the background. `202` with the same JSON; poll `GET /api/v1/acme` until `request.state` is `done` or `failed`, which takes 1 to 3 minutes. `409` while one is running, without a name, zone and token, or when the name isn't inside the zone. `503` until the clock is synchronized | `{"production":true}`, or `false` for Let's Encrypt staging |
+
+Staging certificates aren't trusted by browsers. Use them to test the setup without using up Let's Encrypt's production rate limits.
+
+Once a production certificate has been issued, automatic renewal is on: the controller checks every 6 hours and requests a new certificate 30 days before the current one expires, or when `fqdn` changes. A certificate stored by hand with `PUT /api/v1/config/tls` or `set-tls` replaces an issued one and isn't renewed.
+
+The new certificate's fingerprint is printed as `Server certificate SHA-256:` on the console and by `status`. Once it's in use, check the controller by name like any other server.
 
 ## SDR board
 
@@ -204,6 +221,8 @@ Images aren't signed: anyone with a management client certificate can install fi
 | `rf_weather_wind_avg_kmh`, `rf_weather_wind_gust_kmh`, `rf_weather_wind_direction_degrees` | gauge | `station` |
 | `rf_weather_rain_mm_total` | counter | `station`. Resets when the sensor loses power |
 | `rf_weather_uv_index`, `rf_weather_light_lux` | gauge | `station` |
+| `rf_tls_certificate_expiry_seconds` | gauge | Unix time the stored certificate expires; only with a stored certificate |
+| `rf_acme_request_failed` | gauge | `1` when the last certificate request failed |
 | `rf_ota_pending_verify` | gauge | `1` while the running image waits for confirmation |
 | `rf_ota_rollbacks_detected_total` | counter | |
 | `rf_sdr_powered` | gauge | `0` while the relay has the Radxa's power cut |

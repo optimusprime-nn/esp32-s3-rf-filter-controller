@@ -7,6 +7,7 @@
 #include "temp_sensor.h"
 #include "weather.h"
 #include "sdr_power.h"
+#include "acme.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -84,7 +85,11 @@ static void set_tls(void) {
         put("Paste certificate PEM:\r\n");
         if(read_pem(cert,cap,true)) {
             put("Paste private key PEM (not echoed):\r\n");
-            if(read_pem(key,cap,false)) report(rf_provision_set_tls(cert,key));
+            if(read_pem(key,cap,false)) {
+                esp_err_t e=rf_provision_set_tls(cert,key);
+                if(e==ESP_OK) rf_acme_forget_certificate();
+                report(e);
+            }
         }
     }
     if(key) { rf_secure_zero(key,cap); free(key); }

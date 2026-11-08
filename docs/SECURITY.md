@@ -16,7 +16,7 @@ Over the network, rebooting or power-cycling the SDR board needs mTLS like every
 The USB provisioning console has no login: physical access to the ESP32-S3 USB port is the authorisation. It can show the enrollment code, replace Wi-Fi credentials and the HTTPS certificate, and reboot or power-cycle the SDR board, but it can't release or change a claim. Anything wired to that port, including the Radxa, is fully trusted. The port also exposes USB-JTAG. Keep it inside the enclosure.
 
 ## Still to do
-- NVS encryption and flash encryption. The bootstrap private key, any stored TLS key and Wi-Fi credentials are in plain NVS, unlike on the reference, which keeps them encrypted.
+- NVS encryption and flash encryption. The bootstrap private key, any stored TLS key, the ACME account key, the Cloudflare API token and Wi-Fi credentials are in plain NVS, unlike on the reference, which keeps them encrypted. Anyone with the board and a USB cable can read them. Limit the Cloudflare token to Zone:Read and DNS:Edit on one zone.
 - Secure boot.
 - Signed OTA images. Updates and rollback work, and an upload must be an image for this project with a valid SHA-256, but anyone with a management client certificate can install firmware.
 - Fail closed on missing configuration and power glitches.

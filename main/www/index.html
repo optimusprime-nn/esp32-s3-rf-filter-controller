@@ -115,6 +115,17 @@ select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--li
 <div class="row"><input id="otaFile" type="file" accept=".bin" aria-label="Firmware image"><button id="otaUpload">Upload</button></div>
 <div class="row"><button id="otaConfirm">Confirm this firmware</button><button id="otaRollback">Roll back</button></div>
 </div>
+<div class="card">
+<h2>Certificate (Let's Encrypt)</h2>
+<table id="acme"></table>
+<form id="acmeForm">
+<label>Certificate name<input id="fqdn" maxlength="253" placeholder="rf1.example.com"></label>
+<label>Cloudflare zone<input id="cfZone" maxlength="253" placeholder="example.com"></label>
+<label>Cloudflare API token (Zone:Read, DNS:Edit)<input id="cfToken" type="password" autocomplete="off" placeholder="stored; enter a new one to replace it"></label>
+<div class="row"><button>Save</button><button type="button" id="cfForget">Forget token</button></div>
+</form>
+<div class="row"><button id="acmeIssue">Get certificate</button><button id="acmeStaging">Test with staging</button></div>
+</div>
 </div>
 </main>
 <script>
@@ -132,6 +143,19 @@ async function api(method,path,body,headers){
   return data;
 }
 function row(table,label,value){const tr=table.insertRow();tr.insertCell().textContent=label;tr.insertCell().textContent=value}
+function renderAcme(a){
+  const t=$('acme');t.textContent='';const r=a.request,c=a.certificate;
+  if(c.present){row(t,'In use',c.serving?(c.source==='manual'?'Certificate stored by hand':c.source==='letsencrypt'?"Let's Encrypt":"Let's Encrypt staging (untrusted)"):'Bootstrap certificate (reboot to use the stored one)');
+    row(t,'Name',c.hostname);row(t,'Expires',c.valid_to.replace('T',' ')+(c.days_left!==null?' ('+c.days_left+' days)':''));}
+  else row(t,'In use','Bootstrap certificate');
+  row(t,'Automatic renewal',a.automatic_renewal?'On, 30 days before expiry':'Off until a certificate is issued');
+  row(t,'Cloudflare token',a.cloudflare_token_present?'Stored for '+a.cloudflare_zone:'Not stored');
+  if(r.state!=='idle')row(t,'Last request',(r.state==='running'?'Running: '+r.stage:r.state==='done'?'Issued':'Failed: '+(r.error||r.stage))+(r.environment==='staging'?' (staging)':''));
+  if(!a.clock_synchronized)row(t,'Clock','Not synchronized; check the NTP servers');
+  $('acmeIssue').disabled=$('acmeStaging').disabled=r.state==='running';
+  $('cfForget').hidden=!a.cloudflare_token_present;
+  if(document.activeElement!==$('cfZone')&&!$('cfZone').value)$('cfZone').value=a.cloudflare_zone;
+}
 function render(s){
   const f=$('filters');
   if(!f.children.length)for(let i=1;i<=4;i++){const b=document.createElement('button');b.textContent='Filter '+i;b.dataset.port=i;b.onclick=()=>api('PUT','/api/v1/rf/filter',{filter:i}).then(()=>{msg('Filter '+i+' selected');refresh()}).catch(e=>msg(e.message,true));f.appendChild(b)}
@@ -158,6 +182,7 @@ function render(s){
   row(z,'Since controller boot',s.sdr.soft_resets+' reboots, '+s.sdr.hard_resets+' power cycles');
   row(z,'Last action',s.sdr.last_action?(s.sdr.last_action==='reboot'?'Reboot':'Power cycle')+', '+ago(Math.round(s.sdr.last_action_age_ms/1000)):'none');
   $('sdrReboot').disabled=$('sdrPower').disabled=s.sdr.state!=='idle';
+  if(s.acme)renderAcme(s.acme);
   row(d,'Last reset',s.system.reset_reason);row(d,'Server certificate',s.console.server_certificate);row(d,'Free internal heap',s.system.heap_internal_free+' bytes');
 }
 const DIRS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
@@ -210,7 +235,7 @@ let busy=false;
 async function refresh(){if(busy)return;busy=true;try{render(await api('GET','/api/v1/status'))}catch(e){msg(e.message,true)}finally{busy=false}}
 async function loadConfig(){
   try{const c=await api('GET','/api/v1/config');
-    $('hostname').value=c.hostname;$('ntp1').value=c.ntp_servers[0];$('ntp2').value=c.ntp_servers[1];$('dhcp').checked=c.network.dhcp;
+    $('hostname').value=c.hostname;$('fqdn').value=c.fqdn;$('ntp1').value=c.ntp_servers[0];$('ntp2').value=c.ntp_servers[1];$('dhcp').checked=c.network.dhcp;
     for(const k of['address','netmask','gateway','dns'])$(k).value=c.network[k];syncDhcp()}catch(e){msg(e.message,true)}
 }
 function syncDhcp(){for(const k of['address','netmask','gateway','dns'])$(k).disabled=$('dhcp').checked}
@@ -235,6 +260,19 @@ $('otaUpload').onclick=async()=>{const f=$('otaFile').files[0];if(!f){msg('Choos
 $('otaConfirm').onclick=()=>api('POST','/api/v1/ota/confirm').then(()=>{msg('Firmware confirmed');refresh()}).catch(e=>msg(e.message,true));
 $('otaRollback').onclick=()=>{if(!confirm('Reboot into the previous firmware?'))return;
   api('POST','/api/v1/ota/rollback',undefined,{'X-Confirm-Rollback':'ROLLBACK'}).then(r=>msg('Rolling back to '+r.version+'…')).catch(e=>msg(e.message,true))};
+$('acmeForm').onsubmit=async e=>{e.preventDefault();
+  try{await api('PUT','/api/v1/config/hostname',{fqdn:$('fqdn').value.trim()});
+    const tok=$('cfToken').value.trim();
+    if(tok){msg('Checking the token with Cloudflare…');await api('PUT','/api/v1/config/cloudflare',{api_token:tok,zone_name:$('cfZone').value.trim()});$('cfToken').value=''}
+    msg('Saved');refresh()}catch(err){msg(err.message,true)}};
+$('cfForget').onclick=()=>{if(!confirm('Forget the Cloudflare token? Automatic renewal stops.'))return;
+  api('DELETE','/api/v1/config/cloudflare').then(()=>{msg('Token removed');refresh()}).catch(e=>msg(e.message,true))};
+function issue(production){
+  if(!confirm(production?"Request a trusted certificate from Let's Encrypt for "+$('fqdn').value+'? HTTPS switches to it when it arrives.':
+      "Request a test certificate from Let's Encrypt staging? Browsers won't trust it; it checks the setup without using up production limits."))return;
+  api('POST','/api/v1/acme/issue',{production}).then(()=>{msg('Requesting the certificate. This takes 1 to 3 minutes.');refresh()}).catch(e=>msg(e.message,true))}
+$('acmeIssue').onclick=()=>issue(true);
+$('acmeStaging').onclick=()=>issue(false);
 $('reboot').onclick=()=>{if(!confirm('Reboot the controller?'))return;
   api('POST','/api/v1/system/reboot',undefined,{'X-Confirm-Reboot':'REBOOT'}).then(()=>msg('Rebooting…')).catch(e=>msg(e.message,true))};
 loadConfig();refresh();setInterval(refresh,1000);
