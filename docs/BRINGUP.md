@@ -112,7 +112,7 @@ Wire them as in [HARDWARE.md](HARDWARE.md#fan). With no fan connected, `status` 
 
 | Check | Expected |
 |---|---|
-| Measure GPIO1 with a fan driver fitted | Close to 0 V average at `fan 100`, close to 3.3 V at `fan 0` (the output is inverted) |
+| Measure GPIO1, then the level shifter's 5 V output | GPIO1 close to 3.3 V and the output close to 5 V at `fan 100`; both close to 0 V at `fan 0` |
 | `fan 30`, wait 3 seconds, then `fan` | The RPM falls and settles |
 | Press reset and watch the fan | Full speed until the firmware starts, then the saved speed |
 | `temps` with an LM75-family sensor at `0x48` | `internal` and `i2c-0x48` both show plausible readings |

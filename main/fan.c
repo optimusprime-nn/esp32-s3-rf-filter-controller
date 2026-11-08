@@ -1,6 +1,12 @@
 #include "fan.h"
 #include "fan_math.h"
 #include "sdkconfig.h"
+/* A Kconfig bool that is off leaves its macro undefined. */
+#ifdef CONFIG_RF_FAN_PWM_INVERTED
+#define PWM_INVERTED true
+#else
+#define PWM_INVERTED false
+#endif
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/pulse_cnt.h"
@@ -41,7 +47,7 @@ static esp_err_t save_percent(uint8_t p) {
     return e;
 }
 static esp_err_t apply(uint8_t p) {
-    esp_err_t e=ledc_set_duty(FAN_MODE,FAN_CHANNEL,rf_fan_duty(p,FAN_BITS,CONFIG_RF_FAN_PWM_INVERTED));
+    esp_err_t e=ledc_set_duty(FAN_MODE,FAN_CHANNEL,rf_fan_duty(p,FAN_BITS,PWM_INVERTED));
     if(e==ESP_OK) e=ledc_update_duty(FAN_MODE,FAN_CHANNEL);
     if(e==ESP_OK) { percent=p; stall_logged=false; }
     return e;
@@ -82,7 +88,7 @@ esp_err_t rf_fan_start(void) {
         .freq_hz=CONFIG_RF_FAN_PWM_FREQ_HZ,.clk_cfg=LEDC_AUTO_CLK};
     esp_err_t e=ledc_timer_config(&timer);
     ledc_channel_config_t chan={.gpio_num=CONFIG_RF_FAN_PWM_GPIO,.speed_mode=FAN_MODE,.channel=FAN_CHANNEL,
-        .timer_sel=FAN_TIMER,.duty=rf_fan_duty(p,FAN_BITS,CONFIG_RF_FAN_PWM_INVERTED)};
+        .timer_sel=FAN_TIMER,.duty=rf_fan_duty(p,FAN_BITS,PWM_INVERTED)};
     if(e==ESP_OK) e=ledc_channel_config(&chan);
     if(e!=ESP_OK) return e;
     percent=p;
