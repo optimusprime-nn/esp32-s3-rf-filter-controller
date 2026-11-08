@@ -50,6 +50,11 @@ select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--li
 <div class="row" id="filters"></div>
 </div>
 <div class="card">
+<h2>SDR board</h2>
+<table id="sdr"></table>
+<div class="row"><button id="sdrReboot">Reboot</button><button id="sdrPower">Power cycle</button></div>
+</div>
+<div class="card">
 <h2>Fan</h2>
 <div class="big"><span id="rpm">–</span> <span class="muted" style="font-size:15px">RPM</span></div>
 <p class="muted">Duty <span id="duty">–</span>%</p>
@@ -136,6 +141,11 @@ function render(s){
   row(d,'Hostname',s.device.hostname);row(d,'IPv4',s.device.ipv4||'none');row(d,'Firmware',s.device.firmware);
   row(d,'Uptime',Math.floor(s.system.uptime_ms/1000)+' s');row(d,'Time',s.time.synchronized?new Date(s.time.unix_time*1000).toISOString().replace('.000',''):'not synchronised');
   renderWeather(s.weather);
+  const z=$('sdr');z.textContent='';
+  row(z,'State',{idle:'Running',reboot_requested:'Reboot requested',power_off:'Power off'}[s.sdr.state]||s.sdr.state);
+  row(z,'Since controller boot',s.sdr.soft_resets+' reboots, '+s.sdr.hard_resets+' power cycles');
+  row(z,'Last action',s.sdr.last_action?(s.sdr.last_action==='reboot'?'Reboot':'Power cycle')+', '+ago(Math.round(s.sdr.last_action_age_ms/1000)):'none');
+  $('sdrReboot').disabled=$('sdrPower').disabled=s.sdr.state!=='idle';
   row(d,'Last reset',s.system.reset_reason);row(d,'Server certificate',s.console.server_certificate);row(d,'Free internal heap',s.system.heap_internal_free+' bytes');
 }
 const DIRS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
@@ -200,6 +210,10 @@ $('netForm').onsubmit=async e=>{e.preventDefault();
     await api('PUT','/api/v1/config/ntp',{server:$('ntp').value});
     const n=$('dhcp').checked?{dhcp:true}:{dhcp:false,address:$('address').value,netmask:$('netmask').value,gateway:$('gateway').value,dns:$('dns').value};
     await api('PUT','/api/v1/config/network',n);msg('Saved. Reboot to apply.')}catch(err){msg(err.message,true)}};
+$('sdrReboot').onclick=()=>{if(!confirm('Ask the SDR board to reboot?'))return;
+  api('POST','/api/v1/sdr/reboot',undefined,{'X-Confirm-SDR-Reboot':'REBOOT'}).then(()=>{msg('SDR reboot requested');refresh()}).catch(e=>msg(e.message,true))};
+$('sdrPower').onclick=()=>{if(!confirm('Cut the SDR board's power for a few seconds? Unsaved work on it is lost.'))return;
+  api('POST','/api/v1/sdr/power-cycle',undefined,{'X-Confirm-SDR-Power-Cycle':'POWER-CYCLE'}).then(()=>{msg('SDR power cut; it comes back by itself');refresh()}).catch(e=>msg(e.message,true))};
 $('reboot').onclick=()=>{if(!confirm('Reboot the controller?'))return;
   api('POST','/api/v1/system/reboot',undefined,{'X-Confirm-Reboot':'REBOOT'}).then(()=>msg('Rebooting…')).catch(e=>msg(e.message,true))};
 loadConfig();refresh();setInterval(refresh,1000);

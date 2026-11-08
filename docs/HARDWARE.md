@@ -12,7 +12,33 @@ Two HMC7992 SP4T modules: common RFC of switch A is RF input; common RFC of swit
 | 3 | 0 | 1 |
 | 4 | 1 | 1 |
 
-GPIO4=A, GPIO5=B, GPIO6=Radxa reset driver (active low), GPIO7=RF mute (active high). These are **provisional** assignments. The reset GPIO must NOT be connected directly to an unknown Radxa reset pad or power rail. Use a correctly rated isolated/open-drain interface after identifying the Radxa board's documented reset circuit.
+## Pin map
+
+| GPIO | Use | Notes |
+|---|---|---|
+| 1 | Fan PWM | See [Fan](#fan) |
+| 4 | SDR soft reset | Open drain, active low. See [SDR board resets](#sdr-board-resets) |
+| 5 | SDR hard reset relay | Active high. See [SDR board resets](#sdr-board-resets) |
+| 6 | Filter switch A | Shared by both HMC7992s |
+| 7 | Filter switch B | Shared by both HMC7992s |
+| 8 | RF mute | Active high, held on by the firmware |
+| 9 | Fan tachometer | |
+| 10, 11 | I2C SDA, SCL | Temperature sensors |
+| 12 to 16 | CC1101 SCK, MOSI, MISO, CS, GDO0 | Weather receiver |
+| 19, 20 | Native USB | Provisioning console |
+
+The SDR, fan, I2C and CC1101 pins can be changed in `menuconfig`; the filter and mute pins are in `main/filter.h`.
+
+## SDR board resets
+The SDR board is a Radxa Zero 3. The controller can reboot it two ways, from the API, the dashboard or the USB console.
+
+**Soft reset (GPIO4)** asks Linux on the Radxa to reboot cleanly. Wire GPIO4 to a Radxa header GPIO, with a common ground. GPIO4 is open drain: it pulls the line low for 1 second and otherwise leaves it floating, so it never drives the Radxa while the Radxa's power is cut. The Radxa side needs:
+- a pull-up on that GPIO (the internal one is enough), and
+- a `gpio-shutdown` or `gpio-keys` device-tree overlay, or a small service, that reboots on a falling edge.
+
+**Hard reset (GPIO5)** cuts the Radxa's power through a relay. Run the Radxa's 5 V through the relay's **normally closed** contact, so the Radxa stays powered while GPIO5 is low, including while this controller is off, resetting or being flashed. GPIO5 goes high for 5 seconds, then low again. Drive the relay coil through a transistor with a flyback diode, never straight from the GPIO, and fit a 10 kΩ pull-down on the transistor's input: GPIO5 floats while the controller resets.
+
+After either reset, the firmware refuses another one for 10 seconds. The pulse length, power-off time and cooldown are under "RF controller SDR board resets" in `menuconfig`.
 
 HMC7992 has no all-off code. Unselected RF ports are terminated. A mute interlock is only effective when connected to an actual upstream source-inhibit input; firmware delays alone do not prevent live-RF switching. Ensure the mute circuit defaults to inhibit while MCU is unpowered, resetting, or in fault. GPIO startup cannot guarantee RF safety.
 
@@ -25,12 +51,12 @@ Defaults assume a 4-wire 12 V PC fan. The fan's PWM input has its own pull-up, o
 |---|---|
 | GND | Ground, shared with the ESP32-S3 |
 | +12 V | 12 V supply |
-| PWM | Collector of an NPN transistor, such as a 2N3904 or MMBT3904, or the drain of a logic-level N-MOSFET such as a 2N7002. Emitter or source to ground. Drive the base from GPIO8 through 1 kΩ, or the gate directly, with a 10 kΩ pull-down to ground |
+| PWM | Collector of an NPN transistor, such as a 2N3904 or MMBT3904, or the drain of a logic-level N-MOSFET such as a 2N7002. Emitter or source to ground. Drive the base from GPIO1 through 1 kΩ, or the gate directly, with a 10 kΩ pull-down to ground |
 | Tach | GPIO9, with a 10 kΩ pull-up to **3.3 V**. Never pull it up to 12 V |
 
 The transistor inverts the signal, which is why "Invert PWM output" is on by default. The pull-down keeps the transistor off while the GPIO isn't driven, during reset or before the firmware starts, so the fan's own pull-up runs it at full speed. A 3-wire fan needs a low-side MOSFET switching its ground instead: turn the inversion off, and expect tach readings to be unreliable while it's being switched.
 
-GPIO8, GPIO9 and the PWM frequency can be changed in `menuconfig` under "RF controller fan".
+GPIO1, GPIO9 and the PWM frequency can be changed in `menuconfig` under "RF controller fan".
 
 ## Temperature sensors
 LM75-family sensors (LM75, TMP75, TMP102, PCT2075) on I2C: SDA on GPIO10 and SCL on GPIO11, both with 4.7 kΩ pull-ups to 3.3 V. The internal pull-ups are enabled but are too weak to rely on. Each sensor needs its own address in 0x48 to 0x4F, and every address must be listed in `menuconfig` under "RF controller temperature sensors" (default `0x48`). Only list addresses that hold one of these sensors. The firmware also reads the ESP32-S3's own temperature sensor.

@@ -3,7 +3,7 @@ menu "RF controller fan"
     config RF_FAN_PWM_GPIO
         int "Fan PWM output GPIO"
         range 0 48
-        default 8
+        default 1
         help
             Drives the fan's PWM input through a transistor. Avoid strapping pins,
             USB (GPIO19/20) and octal PSRAM (GPIO33 to GPIO37).
@@ -129,5 +129,47 @@ menu "RF controller weather station receiver"
         depends on RF_WEATHER_ENABLE
         range 0 48
         default 16
+
+endmenu
+
+menu "RF controller SDR board resets"
+
+    config RF_SDR_SOFT_RESET_GPIO
+        int "Soft reset GPIO (to a Radxa GPIO)"
+        range 0 48
+        default 4
+        help
+            Open-drain, active low. Pulled low to ask the Radxa to reboot cleanly.
+            The Radxa side needs a pull-up and a gpio-shutdown key or service
+            that reboots on a falling edge.
+
+    config RF_SDR_SOFT_RESET_PULSE_MS
+        int "Soft reset pulse length (ms)"
+        range 50 10000
+        default 1000
+
+    config RF_SDR_RELAY_GPIO
+        int "Hard reset relay GPIO"
+        range 0 48
+        default 5
+        help
+            Active high. Energises the relay whose normally-closed contact carries
+            the Radxa's power, so power is cut only while this output is high.
+            Fit a pull-down on the relay driver's input: the pin floats while this
+            controller resets.
+
+    config RF_SDR_POWER_OFF_MS
+        int "Hard reset power-off time (ms)"
+        range 500 60000
+        default 5000
+        help
+            How long the Radxa stays unpowered before the relay releases.
+
+    config RF_SDR_COOLDOWN_MS
+        int "Cooldown after an SDR reset (ms)"
+        range 0 600000
+        default 10000
+        help
+            New reset requests are refused for this long after one ends.
 
 endmenu

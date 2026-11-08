@@ -6,6 +6,7 @@
 #include "bootstrap_tls.h"
 #include "temp_sensor.h"
 #include "weather.h"
+#include "sdr_power.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -15,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 static const char *TAG="usb_console";
+static void show_sdr(void);
 #define PEM_LINE_MAX 128
 extern esp_err_t rf_network_get_ip(char *out, size_t len);
 static void put(const char *s) {
@@ -183,6 +185,21 @@ static void show_status(void) {
     put("Wi-Fi credentials: "); put(s.wifi?"provisioned\r\n":"missing\r\n");
     put("Management: "); put(rf_ownership_claimed()?"claimed (mTLS)\r\n":"unclaimed; run enrollment\r\n");
     put("TLS certificate and key: "); put(s.tls?"provisioned\r\n":"missing\r\n");
+    show_sdr();
+}
+static void show_sdr(void) {
+    rf_sdr_status_t s;
+    rf_sdr_status(&s);
+    char b[96];
+    snprintf(b,sizeof(b),"SDR: %s; %lu reboots, %lu power cycles since boot\r\n",rf_sdr_state_name(s.state),
+        (unsigned long)s.soft_resets,(unsigned long)s.hard_resets);
+    put(b);
+}
+static void sdr_command(bool hard) {
+    esp_err_t e=hard?rf_sdr_hard_reset():rf_sdr_soft_reset();
+    if(e==ESP_OK) put(hard?"SDR power cut; it comes back by itself\r\n":"SDR reboot requested\r\n");
+    else if(e==ESP_ERR_INVALID_STATE) put("ERROR: an SDR reset is in progress or just finished; try again shortly\r\n");
+    else { put("ERROR: "); put(esp_err_to_name(e)); put("\r\n"); }
 }
 static void console_task(void *arg) {
     char cmd[32];
@@ -200,7 +217,10 @@ static void console_task(void *arg) {
         else if(!strcmp(cmd,"set-wifi")) set_wifi();
         else if(!strcmp(cmd,"enrollment")) show_enrollment();
         else if(!strcmp(cmd,"set-tls")) set_tls();
-        else put("Commands: status, filter [1-4], fan [0-100], temps, weather, weather-station <id|any>, enrollment, set-wifi, set-tls. Ctrl-C cancels.\r\n");
+        else if(!strcmp(cmd,"sdr")) show_sdr();
+        else if(!strcmp(cmd,"sdr-reboot")) sdr_command(false);
+        else if(!strcmp(cmd,"sdr-power-cycle")) sdr_command(true);
+        else put("Commands: status, filter [1-4], fan [0-100], temps, weather, weather-station <id|any>, sdr, sdr-reboot, sdr-power-cycle, enrollment, set-wifi, set-tls. Ctrl-C cancels.\r\n");
     }
 }
 esp_err_t rf_usb_console_start(void) {

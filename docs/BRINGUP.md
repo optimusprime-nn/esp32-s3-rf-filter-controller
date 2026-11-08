@@ -43,9 +43,9 @@ Log lines can appear in the middle of what you type; the command still works.
 **Pass:** it shows the firmware version, filter 1, Wi-Fi and TLS `missing`, and `Management: unclaimed`.
 
 ## 3. Check filter switching
-Measure GPIO4 (A) and GPIO5 (B) against ground. High is about 3.3 V.
+Measure GPIO6 (A) and GPIO7 (B) against ground. High is about 3.3 V. GPIO8 (RF mute) stays high throughout.
 
-| Command | GPIO4 (A) | GPIO5 (B) |
+| Command | GPIO6 (A) | GPIO7 (B) |
 |---|---|---|
 | `filter 1` | low | low |
 | `filter 2` | high | low |
@@ -112,7 +112,7 @@ Wire them as in [HARDWARE.md](HARDWARE.md#fan). With no fan connected, `status` 
 
 | Check | Expected |
 |---|---|
-| Measure GPIO8 with a fan driver fitted | Close to 0 V average at `fan 100`, close to 3.3 V at `fan 0` (the output is inverted) |
+| Measure GPIO1 with a fan driver fitted | Close to 0 V average at `fan 100`, close to 3.3 V at `fan 0` (the output is inverted) |
 | `fan 30`, wait 3 seconds, then `fan` | The RPM falls and settles |
 | Press reset and watch the fan | Full speed until the firmware starts, then the saved speed |
 | `temps` with an LM75-family sensor at `0x48` | `internal` and `i2c-0x48` both show plausible readings |
@@ -132,6 +132,17 @@ Wire the CC1101 as in [HARDWARE.md](HARDWARE.md#weather-station-receiver). Witho
 | Open `https://<device-ip>/weather` and leave it for 10 minutes | Current conditions, and the charts fill in with one point a minute |
 
 If nothing is heard after a few minutes with the sensor close by, check the module's band and the antenna first. Then turn on "Invert the FSK data" in `menuconfig`, rebuild and flash, and try again. Tell me which setting worked, so the default can be fixed.
+
+## 8. Check the SDR resets
+Do this before the Radxa is wired, with a meter on GPIO4 and GPIO5. See [HARDWARE.md](HARDWARE.md#sdr-board-resets) for the wiring.
+
+| Check | Expected |
+|---|---|
+| At rest | GPIO5 low. GPIO4 floating (open drain); with a 10 kΩ pull-up to 3.3 V fitted for the test, it reads high |
+| `sdr-reboot` on the USB console | GPIO4 low for about 1 s, then released; `sdr` shows 1 reboot |
+| `sdr-power-cycle` | GPIO5 high for about 5 s, then low; the relay clicks twice once it's fitted |
+| Another `sdr-power-cycle` within 10 s | `ERROR: an SDR reset is in progress or just finished` |
+| Press reset on the controller | GPIO5 stays low, so the Radxa's power isn't cut |
 
 ## Report back
 Send me anything that failed, with the serial log. Also note how long the first boot takes to print the bootstrap fingerprint, since it generates a key, and the fan's RPM at 100% next to its rated speed, and the weather station's RSSI and distance. If prompts and log lines get mixed up on the USB console, tell me that too.
