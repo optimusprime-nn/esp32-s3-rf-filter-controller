@@ -58,6 +58,8 @@ Then run `filter 3`, press reset, and run `filter`. **Pass:** it still shows 3 a
 Run `set-wifi`. The network must be WPA2 on 2.4 GHz. Press reset, then run `status` and note the IPv4 address. The serial log also shows `DHCP IPv4 acquired: <address>`.
 
 ## 5. Claim the controller
+The commands in this step and the next are for bash (Linux, macOS, Git Bash or WSL). In Windows PowerShell, use the PowerShell versions given with them: PowerShell has no `<` redirect, and its `curl` is a different command, so call `curl.exe`.
+
 You need a management CA and an admin client certificate. Use the files the esp32p4_nts_time_server setup tool made, if you already have them, or make them as in [API.md](API.md#making-a-management-ca-by-hand).
 
 1. Run `enrollment` on the USB console and note the code and the bootstrap certificate fingerprint.
@@ -67,11 +69,23 @@ You need a management CA and an admin client certificate. Use the files the esp3
    openssl s_client -connect <device-ip>:443 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
    ```
 
+   PowerShell:
+
+   ```powershell
+   '' | openssl s_client -connect <device-ip>:443 2>$null | openssl x509 -noout -fingerprint -sha256
+   ```
+
 3. Open `https://<device-ip>/`. **Pass:** the enrollment information page. Nothing else answers: `curl -sk https://<device-ip>/api/v1/status` gives `404`.
 4. Claim it, with the code from step 1:
 
    ```sh
    curl -sk -X PUT -H 'Content-Type: application/x-pem-file' -H 'X-Provisioning-Code: <code>' --data-binary @management-ca.crt.pem https://<device-ip>/api/v1/provisioning/claim
+   ```
+
+   PowerShell (keep the quotes around `@management-ca.crt.pem`, or PowerShell reads the `@` itself):
+
+   ```powershell
+   curl.exe -sk -X PUT -H 'Content-Type: application/x-pem-file' -H 'X-Provisioning-Code: <code>' --data-binary '@management-ca.crt.pem' https://<device-ip>/api/v1/provisioning/claim
    ```
 
 **Pass:** `{"claimed":true,...}`, the controller reboots by itself, and the log shows `Management ownership is provisioned` and `mTLS management console active`.
@@ -88,6 +102,8 @@ Also check the lockout once, before claiming: five wrong codes give `429 Enrollm
 | Press Filter 2 | Filter 2 highlighted, pins match the table |
 | Watch the dashboard for 10 seconds | Uptime, fan RPM and temperatures update every second |
 | `curl` with the client certificate and `-X POST -H 'X-Confirm-Reboot: REBOOT' .../api/v1/system/reboot` | `202`, then the controller reboots and its bootstrap fingerprint is unchanged |
+
+In PowerShell, write `curl.exe` and quote `@file` arguments, as in step 5. JSON bodies need their inner quotes escaped for Windows PowerShell 5.1, for example `-d '{\"filter\":2}'`.
 
 [API.md](API.md) has `curl` examples for every call.
 

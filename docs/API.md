@@ -212,4 +212,14 @@ openssl x509 -req -in admin-client.csr.pem -CA management-ca.crt.pem -CAkey mana
 openssl pkcs12 -export -inkey admin-client.key.pem -in admin-client.crt.pem -out admin-client.p12
 ```
 
+The same in Windows PowerShell, which has no `\` line continuation or `<(...)`:
+
+```powershell
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 3650 -keyout management-ca.key.pem -out management-ca.crt.pem -subj "/CN=RF management CA" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign"
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -keyout admin-client.key.pem -out admin-client.csr.pem -subj "/CN=rf-admin"
+Set-Content -Encoding ascii admin-client.ext "keyUsage=critical,digitalSignature`nextendedKeyUsage=clientAuth"
+openssl x509 -req -in admin-client.csr.pem -CA management-ca.crt.pem -CAkey management-ca.key.pem -days 825 -out admin-client.crt.pem -extfile admin-client.ext
+openssl pkcs12 -export -inkey admin-client.key.pem -in admin-client.crt.pem -out admin-client.p12
+```
+
 Each command asks for a password to protect its private key. Keep `management-ca.key.pem` offline: anyone holding it can make certificates that manage the controller.
