@@ -24,7 +24,7 @@ void nvs_close(nvs_handle_t h) {}
 static int failures;
 #define CHECK(x) do { if(!(x)) { printf("FAIL %s:%d: %s\n",__FILE__,__LINE__,#x); failures++; } } while(0)
 static rf_management_settings_t static_settings(const char *ip,const char *mask,const char *gw) {
-    rf_management_settings_t s={.dhcp=false,.hostname="rf",.fqdn="rf.example.com",.ntp_server="pool.ntp.org",.dns="192.168.1.1"};
+    rf_management_settings_t s={.dhcp=false,.hostname="rf",.fqdn="rf.example.com",.ntp_servers={"pool.ntp.org","time.google.com"},.dns="192.168.1.1"};
     strcpy(s.ipv4,ip); strcpy(s.netmask,mask); strcpy(s.gateway,gw);
     return s;
 }
@@ -68,6 +68,23 @@ int main(void) {
     CHECK(rf_settings_load(&out)==ESP_ERR_INVALID_STATE);
     store_len=sizeof(rf_management_settings_t)-1;
     CHECK(rf_settings_load(&out)==ESP_ERR_INVALID_STATE);
+    /* Both NTP servers are required. */
+    s=static_settings("192.168.1.10","255.255.255.0","192.168.1.1");
+    s.ntp_servers[1][0]='\0';
+    CHECK(!rf_settings_valid(&s));
+    strcpy(s.ntp_servers[1],"bad..name");
+    CHECK(!rf_settings_valid(&s));
+    /* A stored single-server setting keeps its server first and gains a different second one. */
+    rf_management_settings_v1_t v1={.dhcp=false,.ipv4="192.168.1.10",.netmask="255.255.255.0",.gateway="192.168.1.1",
+        .dns="192.168.1.1",.hostname="rf",.fqdn="rf.example.com",.ntp_server="ntp.example.com"};
+    memcpy(store,&v1,sizeof(v1)); store_len=sizeof(v1);
+    CHECK(rf_settings_load(&out)==ESP_OK && !out.dhcp && !strcmp(out.ipv4,"192.168.1.10") && !strcmp(out.hostname,"rf"));
+    CHECK(!strcmp(out.ntp_servers[0],"ntp.example.com") && !strcmp(out.ntp_servers[1],"time.cloudflare.com"));
+    strcpy(v1.ntp_server,"time.cloudflare.com");
+    memcpy(store,&v1,sizeof(v1)); store_len=sizeof(v1);
+    CHECK(rf_settings_load(&out)==ESP_OK && !strcmp(out.ntp_servers[0],"time.cloudflare.com") && !strcmp(out.ntp_servers[1],"time.google.com"));
+    store_len=0;
+    CHECK(rf_settings_load(&out)==ESP_OK && !strcmp(out.ntp_servers[0],"time.cloudflare.com") && !strcmp(out.ntp_servers[1],"time.google.com"));
     printf("%s\n",failures?"FAILED":"PASSED");
     return failures!=0;
 }

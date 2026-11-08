@@ -35,13 +35,25 @@ static bool valid_static(const rf_management_settings_t *s) {
 bool rf_settings_valid(const rf_management_settings_t *s) {
     if(!s || !valid_dns(s->hostname,RF_HOSTNAME_MAX,false) ||
        !valid_dns(s->fqdn,RF_FQDN_MAX,true) ||
-       !valid_dns(s->ntp_server,RF_NTP_MAX,true)) return false;
+       !valid_dns(s->ntp_servers[0],RF_NTP_MAX,true) || !valid_dns(s->ntp_servers[1],RF_NTP_MAX,true)) return false;
     if(s->acme_enabled && (!strchr(s->fqdn,'.') || !valid_dns(s->cloudflare_zone,RF_FQDN_MAX,true))) return false;
     return s->dhcp || valid_static(s);
 }
 static const rf_management_settings_t defaults={
-    .dhcp=true,.hostname="rf-controller",.fqdn="rf-controller.local",.ntp_server="pool.ntp.org"
+    .dhcp=true,.hostname="rf-controller",.fqdn="rf-controller.local",.ntp_servers={"time.cloudflare.com","time.google.com"}
 };
+/* Keeps the one stored server first and adds a default second one that differs from it. */
+static void from_v1(const rf_management_settings_v1_t *v1, rf_management_settings_t *out) {
+    *out=defaults;
+    out->dhcp=v1->dhcp;
+    memcpy(out->ipv4,v1->ipv4,sizeof(out->ipv4)); memcpy(out->netmask,v1->netmask,sizeof(out->netmask));
+    memcpy(out->gateway,v1->gateway,sizeof(out->gateway)); memcpy(out->dns,v1->dns,sizeof(out->dns));
+    memcpy(out->hostname,v1->hostname,sizeof(out->hostname)); memcpy(out->fqdn,v1->fqdn,sizeof(out->fqdn));
+    memcpy(out->ntp_servers[0],v1->ntp_server,sizeof(out->ntp_servers[0]));
+    strcpy(out->ntp_servers[1],strcmp(v1->ntp_server,defaults.ntp_servers[0])?defaults.ntp_servers[0]:defaults.ntp_servers[1]);
+    memcpy(out->cloudflare_zone,v1->cloudflare_zone,sizeof(out->cloudflare_zone));
+    out->acme_enabled=v1->acme_enabled;
+}
 esp_err_t rf_settings_load(rf_management_settings_t *out) {
     if(!out) return ESP_ERR_INVALID_ARG;
     *out=defaults;
@@ -50,6 +62,12 @@ esp_err_t rf_settings_load(rf_management_settings_t *out) {
     if(e!=ESP_OK) return e;
     size_t n=sizeof(*out); e=nvs_get_blob(h,"settings",out,&n); nvs_close(h);
     if(e==ESP_ERR_NVS_NOT_FOUND) { *out=defaults; return ESP_OK; }
+    if(e==ESP_OK && n==sizeof(rf_management_settings_v1_t)) {
+        rf_management_settings_v1_t v1;
+        memcpy(&v1,out,sizeof(v1));
+        from_v1(&v1,out);
+        n=sizeof(*out);
+    }
     if(e!=ESP_OK || n!=sizeof(*out) || !rf_settings_valid(out)) { *out=defaults; return ESP_ERR_INVALID_STATE; }
     return ESP_OK;
 }
