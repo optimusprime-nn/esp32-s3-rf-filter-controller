@@ -7,3 +7,5 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
+# Startup (Wi-Fi, bootstrap certificate, HTTPS) overflowed the default 3584 bytes.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

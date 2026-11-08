@@ -7,7 +7,9 @@ typedef struct {
     size_t cap, len;
     bool overflow, last_cr;
 } rf_line_t;
-void rf_line_init(rf_line_t *l, char *buf, size_t cap);
+/* after_cr: the previous line ended with CR, so a leading LF is the rest of that
+   CR+LF and is skipped instead of ending this line empty. */
+void rf_line_init(rf_line_t *l, char *buf, size_t cap, bool after_cr);
 /* *erased is set when the byte removed a character, so the caller can update its echo. */
 rf_line_result_t rf_line_feed(rf_line_t *l, unsigned char c, bool *erased);
 void rf_secure_zero(void *p, size_t n);

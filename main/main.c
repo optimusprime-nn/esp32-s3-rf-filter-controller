@@ -56,4 +56,6 @@ void app_main(void) {
     /* Enrollment only until claimed, then mTLS; see web.c. */
     e=web_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable: %s",esp_err_to_name(e));
+    /* Headroom check: startup overflowed the default 3.5 KB main task stack. */
+    ESP_LOGI(TAG,"Main task stack unused: %u bytes",(unsigned)uxTaskGetStackHighWaterMark(NULL));
 }
