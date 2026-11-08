@@ -28,7 +28,7 @@ A CC1101 on SPI (GPIO12 to GPIO16) receives a VEVOR 7-in-1 weather station (YT60
 
 ## Explicit nonfunctional features
 - No support for this controller in the esp32p4_nts_time_server setup tool yet; claim it by hand as in BRINGUP.md.
-- No OTA updates (`/api/v1/ota/*`) or rollback yet. The flash layout has two OTA slots; firmware boots from `ota_0`.
+- OTA images aren't signed (no secure boot). Rollback needs the bootloader built with this firmware, so a board flashed before OTA support needs one more USB flash.
 - No ACME transaction engine or Cloudflare token storage ported yet; HTTPS uses the bootstrap certificate or one stored by hand.
 - No USB command for network settings; use the API.
 - The SDR resets are untested with a Radxa connected, and the Radxa needs a `gpio-shutdown` overlay or service for the soft reset.

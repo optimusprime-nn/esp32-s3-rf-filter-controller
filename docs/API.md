@@ -57,6 +57,7 @@ Destructive actions need a header with a fixed word. Without it the device answe
 | `X-Confirm-Reboot` | `REBOOT` | `POST /api/v1/system/reboot` |
 | `X-Confirm-SDR-Reboot` | `REBOOT` | `POST /api/v1/sdr/reboot` |
 | `X-Confirm-SDR-Power-Cycle` | `POWER-CYCLE` | `POST /api/v1/sdr/power-cycle` |
+| `X-Confirm-Rollback` | `ROLLBACK` | `POST /api/v1/ota/rollback` |
 
 ## Pages
 
@@ -162,6 +163,23 @@ The SDR board (Radxa Zero 3) can be rebooted cleanly or power-cycled. See [HARDW
 
 Both answer `409` while a reset is running and for 10 seconds after one ends.
 
+## Firmware updates (OTA)
+
+Works as on esp32p4_nts_time_server. The flash has two app slots: an upload goes into the one that isn't running and becomes the next boot.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/ota/status` | `running_version`, `running_partition`, `boot_partition`, `next_partition`, `pending_verify`, `update_in_progress`, `bytes_written`, `rollback_available`, `rollback_version`, `previous_version`, `running_project`, `last_result`, and the counters `attempts`, `successes`, `failures`, `confirmations`, `rollbacks_detected`. Also in the status `ota` section |
+| POST | `/api/v1/ota/image` | Upload a new image. The body is `build/rf_filter_controller.bin` with `Content-Type: application/octet-stream`. `202` `{"staged":true,"reboot_required":true}`; it runs after the next reboot |
+| POST | `/api/v1/ota/confirm` | Mark the running image valid now instead of waiting for the soak. `200` `{"confirmed":true}` |
+| POST | `/api/v1/ota/rollback` | Reboot into the image in the other slot. Needs `X-Confirm-Rollback: ROLLBACK`. `202` `{"scheduled":true,"action":"rollback","version":"..."}`; `409` when there is no usable previous image |
+
+An upload is refused with `400` before anything is written unless it is an ESP32-S3 application image for this project, so time server firmware can't be loaded by mistake. The whole image's SHA-256 is checked before it's made the next boot. A second upload while one is running gets `409`.
+
+A new image boots **pending verification**. If HTTPS management is up 5 minutes later, it confirms itself. If it crashes, resets or can't start HTTPS before then, the bootloader goes back to the previous image, and `rollbacks_detected` counts it. The soak time is under "RF controller firmware updates" in `menuconfig`.
+
+Images aren't signed: anyone with a management client certificate can install firmware. Signed images need secure boot, which isn't enabled.
+
 ## System
 
 | Method | Path | Purpose |
@@ -186,6 +204,8 @@ Both answer `409` while a reset is running and for 10 seconds after one ends.
 | `rf_weather_wind_avg_kmh`, `rf_weather_wind_gust_kmh`, `rf_weather_wind_direction_degrees` | gauge | `station` |
 | `rf_weather_rain_mm_total` | counter | `station`. Resets when the sensor loses power |
 | `rf_weather_uv_index`, `rf_weather_light_lux` | gauge | `station` |
+| `rf_ota_pending_verify` | gauge | `1` while the running image waits for confirmation |
+| `rf_ota_rollbacks_detected_total` | counter | |
 | `rf_sdr_powered` | gauge | `0` while the relay has the Radxa's power cut |
 | `rf_sdr_resets_total` | counter | `type`: `reboot` or `power_cycle`. Since the controller booted |
 | `rf_heap_internal_free_bytes` | gauge | |
@@ -211,6 +231,7 @@ curl -sk $C -X PUT -H "$J" -d '{"percent":60}' $B/api/v1/fan
 curl -sk $C $B/api/v1/sensors/weather
 curl -sk $C -X PUT -H "$J" -d '{"station":"f8f7"}' $B/api/v1/sensors/weather/station
 curl -sk $C -X POST -H 'X-Confirm-Reboot: REBOOT' $B/api/v1/system/reboot
+curl -sk $C -X POST -H 'Content-Type: application/octet-stream' --data-binary @build/rf_filter_controller.bin $B/api/v1/ota/image
 ```
 
 ## Making a management CA by hand

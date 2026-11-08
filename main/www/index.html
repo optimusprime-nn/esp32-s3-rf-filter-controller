@@ -110,6 +110,10 @@ select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--li
 <h2>System</h2>
 <p class="muted">This session is authenticated by your management client certificate.</p>
 <div class="row"><button id="reboot">Reboot</button></div>
+<h2 style="margin-top:14px">Firmware</h2>
+<table id="ota"></table>
+<div class="row"><input id="otaFile" type="file" accept=".bin" aria-label="Firmware image"><button id="otaUpload">Upload</button></div>
+<div class="row"><button id="otaConfirm">Confirm this firmware</button><button id="otaRollback">Roll back</button></div>
 </div>
 </div>
 </main>
@@ -142,6 +146,13 @@ function render(s){
   row(d,'Hostname',s.device.hostname);row(d,'IPv4',s.device.ipv4||'none');row(d,'Firmware',s.device.firmware);
   row(d,'Uptime',Math.floor(s.system.uptime_ms/1000)+' s');row(d,'Time',s.time.synchronized?new Date(s.time.unix_time*1000).toISOString().replace('.000',''):'not synchronised');
   renderWeather(s.weather);
+  const o=s.ota,ot=$('ota');ot.textContent='';
+  row(ot,'Running',o.running_version+' on '+o.running_partition+(o.pending_verify?' (pending verification)':''));
+  if(o.boot_partition!==o.running_partition)row(ot,'Next boot',o.boot_partition+', reboot to activate');
+  row(ot,'Last result',o.last_result.replace(/_/g,' '));
+  if(o.update_in_progress)row(ot,'Uploading',o.bytes_written+' bytes');
+  $('otaConfirm').hidden=!o.pending_verify;
+  $('otaRollback').hidden=!o.rollback_available;$('otaRollback').textContent='Roll back to '+o.rollback_version;
   const z=$('sdr');z.textContent='';
   row(z,'State',{idle:'Running',reboot_requested:'Reboot requested',power_off:'Power off'}[s.sdr.state]||s.sdr.state);
   row(z,'Since controller boot',s.sdr.soft_resets+' reboots, '+s.sdr.hard_resets+' power cycles');
@@ -215,6 +226,15 @@ $('sdrReboot').onclick=()=>{if(!confirm('Ask the SDR board to reboot?'))return;
   api('POST','/api/v1/sdr/reboot',undefined,{'X-Confirm-SDR-Reboot':'REBOOT'}).then(()=>{msg('SDR reboot requested');refresh()}).catch(e=>msg(e.message,true))};
 $('sdrPower').onclick=()=>{if(!confirm('Cut the SDR board's power for a few seconds? Unsaved work on it is lost.'))return;
   api('POST','/api/v1/sdr/power-cycle',undefined,{'X-Confirm-SDR-Power-Cycle':'POWER-CYCLE'}).then(()=>{msg('SDR power cut; it comes back by itself');refresh()}).catch(e=>msg(e.message,true))};
+$('otaUpload').onclick=async()=>{const f=$('otaFile').files[0];if(!f){msg('Choose a .bin file first',true);return}
+  if(!confirm('Upload '+f.name+' ('+f.size+' bytes)? It becomes the next boot.'))return;
+  $('otaUpload').disabled=true;msg('Uploading '+f.name+'…');
+  try{const r=await fetch('/api/v1/ota/image',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f,cache:'no-store'});
+    const t=await r.text();if(!r.ok)throw new Error(t||('HTTP '+r.status));msg('Firmware staged. Reboot to run it; it confirms itself after 5 minutes.');refresh()}
+  catch(e){msg(e.message,true)}finally{$('otaUpload').disabled=false}};
+$('otaConfirm').onclick=()=>api('POST','/api/v1/ota/confirm').then(()=>{msg('Firmware confirmed');refresh()}).catch(e=>msg(e.message,true));
+$('otaRollback').onclick=()=>{if(!confirm('Reboot into the previous firmware?'))return;
+  api('POST','/api/v1/ota/rollback',undefined,{'X-Confirm-Rollback':'ROLLBACK'}).then(r=>msg('Rolling back to '+r.version+'…')).catch(e=>msg(e.message,true))};
 $('reboot').onclick=()=>{if(!confirm('Reboot the controller?'))return;
   api('POST','/api/v1/system/reboot',undefined,{'X-Confirm-Reboot':'REBOOT'}).then(()=>msg('Rebooting…')).catch(e=>msg(e.message,true))};
 loadConfig();refresh();setInterval(refresh,1000);

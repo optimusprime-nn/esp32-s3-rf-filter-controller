@@ -27,6 +27,7 @@
 #include "time_service.h"
 #include "weather.h"
 #include "sdr_power.h"
+#include "ota.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +41,7 @@ static size_t server_key_len;
 static bool bootstrap_cert;
 static esp_timer_handle_t reboot_timer;
 static cJSON *sdr_json(void);
+static cJSON *ota_json(void);
 static unsigned claim_failures;
 #define SMALL_BODY 512
 #define TLS_BODY 40000
@@ -332,6 +334,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON_AddItemToObject(o,"temperature",temperature_json());
     cJSON_AddItemToObject(o,"weather",weather_json());
     cJSON_AddItemToObject(o,"sdr",sdr_json());
+    cJSON_AddItemToObject(o,"ota",ota_json());
     cJSON_AddItemToObject(o,"provisioning",provisioning_json());
     cJSON *console=cJSON_AddObjectToObject(o,"console");
     cJSON_AddStringToObject(console,"mode","mtls");
@@ -559,6 +562,96 @@ static esp_err_t sdr_action(httpd_req_t *req, const char *header, const char *wo
 }
 static esp_err_t sdr_reboot_post(httpd_req_t *req) { return sdr_action(req,"X-Confirm-SDR-Reboot","REBOOT",false); }
 static esp_err_t sdr_power_cycle_post(httpd_req_t *req) { return sdr_action(req,"X-Confirm-SDR-Power-Cycle","POWER-CYCLE",true); }
+/* ---- Firmware updates (as on esp32p4_nts_time_server) ---- */
+static cJSON *ota_json(void) {
+    rf_ota_status_t s;
+    rf_ota_status(&s);
+    char rb[33];
+    bool rollback=!s.update_in_progress && rf_ota_rollback_target(rb,sizeof(rb))==ESP_OK;
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddBoolToObject(o,"rollback_available",rollback);
+    cJSON_AddStringToObject(o,"rollback_version",rollback?rb:"");
+    cJSON_AddBoolToObject(o,"update_in_progress",s.update_in_progress);
+    cJSON_AddBoolToObject(o,"pending_verify",s.pending_verify);
+    cJSON_AddNumberToObject(o,"attempts",s.attempts);
+    cJSON_AddNumberToObject(o,"successes",s.successes);
+    cJSON_AddNumberToObject(o,"failures",s.failures);
+    cJSON_AddNumberToObject(o,"confirmations",s.confirmations);
+    cJSON_AddNumberToObject(o,"rollbacks_detected",s.rollbacks_detected);
+    cJSON_AddNumberToObject(o,"bytes_written",(double)s.bytes_written);
+    cJSON_AddStringToObject(o,"running_partition",s.running_partition);
+    cJSON_AddStringToObject(o,"boot_partition",s.boot_partition);
+    cJSON_AddStringToObject(o,"next_partition",s.next_partition);
+    cJSON_AddStringToObject(o,"running_version",s.running_version);
+    cJSON_AddStringToObject(o,"previous_version",s.previous_version);
+    cJSON_AddStringToObject(o,"running_project",s.running_project);
+    cJSON_AddStringToObject(o,"last_result",s.last_result);
+    return o;
+}
+static esp_err_t ota_status_get(httpd_req_t *req) { return send_json(req,"200 OK",ota_json()); }
+/* Body: the raw application image (build/rf_filter_controller.bin). */
+static esp_err_t ota_image_post(httpd_req_t *req) {
+    if(req->content_len<=0) return send_error(req,"400 Bad Request","Firmware image required");
+    const size_t chunk=4096;
+    uint8_t *buf=malloc(chunk);
+    if(!buf) return send_error(req,"500 Internal Server Error","Out of memory");
+    size_t remaining=req->content_len,have=0;
+    int timeouts=0;
+    bool begun=false,first=true;
+    const char *fail=NULL,*status="400 Bad Request";
+    while(remaining && !fail) {
+        /* The first chunk is read whole, so the image header can be checked before any flash is touched. */
+        size_t want=chunk-have;
+        if(want>remaining) want=remaining;
+        int r=httpd_req_recv(req,(char*)buf+have,want);
+        if(r==HTTPD_SOCK_ERR_TIMEOUT) { if(++timeouts>6) fail="Upload stalled"; continue; }
+        if(r<=0) { fail="Upload interrupted"; break; }
+        timeouts=0;
+        have+=(size_t)r;
+        remaining-=(size_t)r;
+        if(have<chunk && remaining) continue;
+        if(first) {
+            first=false;
+            if(rf_ota_check_header(buf,have)!=ESP_OK) { fail="Not a firmware image for this controller"; break; }
+            esp_err_t e=rf_ota_begin(req->content_len);
+            if(e==ESP_ERR_INVALID_STATE || e==ESP_ERR_TIMEOUT) { fail="Another update is in progress"; status="409 Conflict"; break; }
+            if(e!=ESP_OK) { fail="Image too large or no update slot"; break; }
+            begun=true;
+        }
+        if(rf_ota_write(buf,have)!=ESP_OK) { fail="Flash write failed"; status="500 Internal Server Error"; break; }
+        have=0;
+    }
+    free(buf);
+    if(fail) {
+        if(begun) rf_ota_abort();
+        return send_error(req,status,fail);
+    }
+    if(rf_ota_finish()!=ESP_OK) return send_error(req,"400 Bad Request","Image failed verification");
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddBoolToObject(o,"staged",true);
+    cJSON_AddBoolToObject(o,"reboot_required",true);
+    return send_json(req,"202 Accepted",o);
+}
+static esp_err_t ota_confirm_post(httpd_req_t *req) {
+    if(rf_ota_confirm()!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not confirm the running image");
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddBoolToObject(o,"confirmed",true);
+    return send_json(req,"200 OK",o);
+}
+static esp_err_t ota_rollback_post(httpd_req_t *req) {
+    if(!header_equals(req,"X-Confirm-Rollback","ROLLBACK")) return send_error(req,"412 Precondition Failed","Send X-Confirm-Rollback: ROLLBACK");
+    char version[33];
+    if(rf_ota_rollback_target(version,sizeof(version))!=ESP_OK) return send_error(req,"409 Conflict","No previous image available for rollback");
+    esp_err_t e=rf_ota_rollback();
+    if(e==ESP_ERR_NOT_FOUND || e==ESP_ERR_TIMEOUT || e==ESP_ERR_INVALID_STATE) return send_error(req,"409 Conflict","Rollback unavailable: update in progress or no previous image");
+    if(e!=ESP_OK) return send_error(req,"500 Internal Server Error","Previous image failed verification");
+    if(schedule_reboot()!=ESP_OK) return send_error(req,"500 Internal Server Error","Rollback staged; reboot to activate");
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddBoolToObject(o,"scheduled",true);
+    cJSON_AddStringToObject(o,"action","rollback");
+    cJSON_AddStringToObject(o,"version",version);
+    return send_json(req,"202 Accepted",o);
+}
 static esp_err_t metrics_get(httpd_req_t *req) {
     char buf[4096];
     size_t n=0;
@@ -598,6 +691,10 @@ static esp_err_t metrics_get(httpd_req_t *req) {
         EMIT("# TYPE rf_weather_uv_index gauge\nrf_weather_uv_index{station=\"%s\"} %d\n",id,(int)r->uv_index);
         EMIT("# TYPE rf_weather_light_lux gauge\nrf_weather_light_lux{station=\"%s\"} %lu\n",id,(unsigned long)r->light_lux);
     }
+    rf_ota_status_t ota;
+    rf_ota_status(&ota);
+    EMIT("# TYPE rf_ota_pending_verify gauge\nrf_ota_pending_verify %d\n",ota.pending_verify?1:0);
+    EMIT("# TYPE rf_ota_rollbacks_detected_total counter\nrf_ota_rollbacks_detected_total %lu\n",(unsigned long)ota.rollbacks_detected);
     rf_sdr_status_t sdr;
     rf_sdr_status(&sdr);
     EMIT("# TYPE rf_sdr_powered gauge\nrf_sdr_powered %d\n",sdr.state==RF_SDR_POWER_OFF?0:1);
@@ -661,6 +758,9 @@ static void free_credentials(void) {
     free(server_cert); server_cert=NULL;
     free(client_ca); client_ca=NULL;
 }
+static volatile bool started;
+/* True once HTTPS management is serving; the OTA soak checks it before confirming. */
+bool web_started(void) { return started; }
 esp_err_t web_start(void) {
     if(server) return ESP_ERR_INVALID_STATE;
     size_t cert_len=0,ca_len=0;
@@ -695,6 +795,10 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/config/tls",.method=HTTP_DELETE,.handler=tls_delete},
         {.uri="/api/v1/system/reboot",.method=HTTP_POST,.handler=reboot_post},
         {.uri="/api/v1/sdr",.method=HTTP_GET,.handler=sdr_get},
+        {.uri="/api/v1/ota/status",.method=HTTP_GET,.handler=ota_status_get},
+        {.uri="/api/v1/ota/image",.method=HTTP_POST,.handler=ota_image_post},
+        {.uri="/api/v1/ota/confirm",.method=HTTP_POST,.handler=ota_confirm_post},
+        {.uri="/api/v1/ota/rollback",.method=HTTP_POST,.handler=ota_rollback_post},
         {.uri="/api/v1/sdr/reboot",.method=HTTP_POST,.handler=sdr_reboot_post},
         {.uri="/api/v1/sdr/power-cycle",.method=HTTP_POST,.handler=sdr_power_cycle_post},
     };
@@ -721,5 +825,6 @@ esp_err_t web_start(void) {
     if(claimed) ESP_LOGW(TAG,"mTLS management console active on TCP/443; client certificate required");
     else ESP_LOGW(TAG,"UNPROVISIONED enrollment-only HTTPS active on TCP/443; normal management handlers are disabled");
     log_server_fingerprint(cert_len);
+    started=true;
     return ESP_OK;
 }

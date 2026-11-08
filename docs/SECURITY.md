@@ -18,5 +18,5 @@ The USB provisioning console has no login: physical access to the ESP32-S3 USB p
 ## Still to do
 - NVS encryption and flash encryption. The bootstrap private key, any stored TLS key and Wi-Fi credentials are in plain NVS, unlike on the reference, which keeps them encrypted.
 - Secure boot.
-- OTA updates with signature checking and rollback.
+- Signed OTA images. Updates and rollback work, and an upload must be an image for this project with a valid SHA-256, but anyone with a management client certificate can install firmware.
 - Fail closed on missing configuration and power glitches.
