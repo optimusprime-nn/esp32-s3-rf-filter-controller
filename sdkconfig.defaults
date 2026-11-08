@@ -13,3 +13,5 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_LWIP_SNTP_MAX_SERVERS=2
 # Boot new OTA images pending verification, and roll back if they are not confirmed.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# api.cloudflare.com and Let's Encrypt chains need cross-signed roots, as on the time server.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y

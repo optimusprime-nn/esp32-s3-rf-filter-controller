@@ -510,24 +510,43 @@ def _fingerprint(der: bytes) -> str:
 
 
 class _Connection(http.client.HTTPSConnection):
-    pass
+    """HTTPS to `host`, with SNI and the certificate name check against `tls_name`,
+    so the board can be reached by address while its certificate is checked by name."""
+
+    def __init__(self, host, port, *, context, timeout, tls_name=None):
+        super().__init__(host, port, context=context, timeout=timeout)
+        self._tls_name = tls_name
+
+    def connect(self):
+        if not self._tls_name:
+            return super().connect()
+        sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self._tls_name)
 
 
 class Board:
     """HTTPS to one board's management API, pinned to the certificate
-    fingerprint the board printed on its USB console."""
+    fingerprint the board printed on its USB console. With no pin, the board's
+    certificate must be publicly trusted and valid for `tls_name`: used once it
+    has its Let's Encrypt certificate."""
 
-    def __init__(self, host: str, *, pin: str, credentials: Optional[Credentials] = None,
-                 timeout: float = 30.0):
+    def __init__(self, host: str, *, pin: Optional[str] = None, credentials: Optional[Credentials] = None,
+                 timeout: float = 30.0, tls_name: Optional[str] = None):
+        if not pin and not tls_name:
+            raise ValueError("Board needs a pin or a name to verify")
         self.host = host
-        self.pin = pin.upper()
+        self.pin = pin.upper() if pin else None
+        self.tls_name = tls_name
         self.credentials = credentials
         self.timeout = timeout
 
     def _context(self) -> ssl.SSLContext:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE  # replaced by the fingerprint check below
+        if self.pin:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE  # replaced by the fingerprint check below
+        else:
+            ctx = ssl.create_default_context()
         if self.credentials:
             ctx.load_cert_chain(str(self.credentials.client_cert), str(self.credentials.client_key),
                                 password=self.credentials.password)
@@ -535,11 +554,12 @@ class Board:
 
     def request(self, method: str, path: str, body: Optional[bytes] = None,
                 headers: Optional[dict] = None, timeout: Optional[float] = None) -> tuple[int, bytes]:
-        conn = _Connection(self.host, 443, context=self._context(), timeout=timeout or self.timeout)
+        conn = _Connection(self.host, 443, context=self._context(), timeout=timeout or self.timeout,
+                           tls_name=None if self.pin else self.tls_name)
         try:
             conn.connect()
             seen = _fingerprint(conn.sock.getpeercert(binary_form=True))
-            if seen != self.pin:
+            if self.pin and seen != self.pin:
                 raise SetupError(
                     "The board's certificate does not match the fingerprint it printed on its USB "
                     f"console (expected {self.pin[:16]}..., got {seen[:16]}...). Something on the "
@@ -616,6 +636,77 @@ class Board:
     def reboot(self) -> None:
         self.json("POST", "/api/v1/system/reboot", headers={"X-Confirm-Reboot": "REBOOT"})
 
+    # -- certificate ----------------------------------------------------------------
+    def set_fqdn(self, fqdn: str) -> None:
+        self.json("PUT", "/api/v1/config/hostname", {"fqdn": fqdn})
+
+    def set_cloudflare(self, api_token: str, zone_name: str) -> None:
+        """The board checks the token with Cloudflare from its own network before storing it."""
+        self.json("PUT", "/api/v1/config/cloudflare", {"api_token": api_token, "zone_name": zone_name}, timeout=60)
+
+    def acme(self) -> dict:
+        return self.json("GET", "/api/v1/acme")
+
+    def issue_certificate(self, production: bool) -> dict:
+        return self.json("POST", "/api/v1/acme/issue", {"production": production})
+
+
+# ---------------------------------------------------------------------------
+# DNS and Cloudflare (from this computer, with the same token)
+# ---------------------------------------------------------------------------
+
+CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
+
+
+def _cloudflare(token: str, method: str, path: str, payload=None) -> dict:
+    import urllib.error
+    import urllib.request
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(CLOUDFLARE_API + path, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            errors = json.loads(exc.read()).get("errors", [])
+            detail = "; ".join(e.get("message", "") for e in errors) or str(exc)
+        except ValueError:
+            detail = str(exc)
+        raise SetupError(f"Cloudflare refused the request: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise SetupError(f"Could not reach Cloudflare: {exc.reason}") from exc
+
+
+def cloudflare_zone_id(token: str, zone_name: str) -> str:
+    result = _cloudflare(token, "GET", f"/zones?name={zone_name}").get("result", [])
+    if not result:
+        raise SetupError(f"The token cannot see a zone called {zone_name}. Check the spelling and that "
+                         "the token has Zone:Read on it.")
+    return result[0]["id"]
+
+
+def cloudflare_set_a_record(token: str, zone_id: str, fqdn: str, ip: str, log: Log = _quiet) -> str:
+    """Create or update the A record for fqdn. DNS only, never proxied."""
+    existing = _cloudflare(token, "GET", f"/zones/{zone_id}/dns_records?type=A&name={fqdn}").get("result", [])
+    record = {"type": "A", "name": fqdn, "content": ip, "ttl": 300, "proxied": False}
+    if existing:
+        if existing[0].get("content") == ip and not existing[0].get("proxied"):
+            log(f"DNS already points {fqdn} at {ip}.")
+            return "unchanged"
+        _cloudflare(token, "PUT", f"/zones/{zone_id}/dns_records/{existing[0]['id']}", record)
+        log(f"Updated DNS: {fqdn} -> {ip}")
+        return "updated"
+    _cloudflare(token, "POST", f"/zones/{zone_id}/dns_records", record)
+    log(f"Created DNS: {fqdn} -> {ip}")
+    return "created"
+
+
+def valid_fqdn(text: str) -> bool:
+    labels = text.rstrip(".").split(".")
+    return len(labels) >= 2 and len(text) <= 253 and all(valid_hostname(label) for label in labels) \
+        and text == text.lower()
+
 
 # ---------------------------------------------------------------------------
 # Small helpers used by both front ends
@@ -671,9 +762,11 @@ class SetupRecord:
     One file per board, named by its certificate fingerprint, so several boards
     (and a time server) can share one credentials folder."""
     hostname: str = ""
+    fqdn: str = ""
     ip: str = ""
     fingerprint: str = ""
     static_ip: bool = False
+    certificate: bool = False
     firmware: str = ""
     updated: str = ""
 

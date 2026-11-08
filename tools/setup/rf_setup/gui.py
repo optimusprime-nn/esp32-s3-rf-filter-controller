@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import core, flow
 from .core import SetupError
 
-STEPS = ["Connect", "Firmware", "Wi-Fi", "Certificate", "Claim", "Name", "Network", "Finish"]
+STEPS = ["Connect", "Firmware", "Wi-Fi", "Certificate", "Claim", "Name", "Network", "DNS", "Let's Encrypt", "Finish"]
 PAD = {"padx": 10, "pady": 4}
 
 
@@ -323,14 +323,54 @@ class App(tk.Tk):
         else:
             self.work(lambda: self.session.network(False), self.advance)
 
-    # -- 8. finish -------------------------------------------------------------------
+    # -- 8. DNS / Cloudflare ----------------------------------------------------------
     def page_7(self):
+        fqdn, zone = self.session.current_fqdn()
+        self.text("A Let's Encrypt certificate lets browsers trust the board by name. The board proves it "
+                  "controls the name with a Cloudflare API token limited to Zone:Read and DNS:Edit on your "
+                  "zone. The token is stored on the board. Untick to skip this and the next step.")
+        self.cert_var = self.check("Set up a Let's Encrypt certificate", True)
+        self.fqdn_var = self.field("Full DNS name", fqdn or f"{self.host_var.get().strip()}.example.com")
+        self.zone_var = self.field("Cloudflare zone", zone)
+        self.token_var = self.field("API token", show="*")
+        self.dns_var = self.check(f"Create or update the DNS record for the name -> {self.session.board.host}", True)
+
+    def do_7(self):
+        if not self.cert_var.get():
+            self.show(9)
+            return
+        fqdn, zone = self.fqdn_var.get().strip(), self.zone_var.get().strip()
+        token, create = self.token_var.get().strip(), self.dns_var.get()
+        if not token:
+            messagebox.showwarning("Token needed", "Enter the Cloudflare API token.")
+            return
+        self.work(lambda: self.session.cloudflare(fqdn, token, zone, create), self.advance)
+
+    # -- 9. Let's Encrypt ---------------------------------------------------------------
+    def page_8(self):
+        self.text(f"Next asks Let's Encrypt for a certificate for {self.session.record.fqdn}. It usually "
+                  "takes 1 to 3 minutes. The board then switches HTTPS to it, and this tool checks it the "
+                  "way a browser would.")
+        self.staging_var = self.check("Try Let's Encrypt staging first (an untrusted test certificate)", False)
+        self.next_btn.configure(text="Get certificate")
+
+    def do_8(self):
+        staging = self.staging_var.get()
+
+        def job():
+            if staging:
+                self.session.certificate(production=False)
+            return self.session.certificate(production=True)
+        self.work(job, self.advance)
+
+    # -- 10. finish -------------------------------------------------------------------
+    def page_9(self):
         self.text("Almost done.")
         self.imp_var = (self.check("Install the administrator certificate in Windows for the browser", True)
                         if self.session.can_import() else None)
         self.next_btn.configure(text="Finish")
 
-    def do_7(self):
+    def do_9(self):
         imp = bool(self.imp_var and self.imp_var.get())
 
         def done(notes):

@@ -28,6 +28,7 @@
 #include "weather.h"
 #include "sdr_power.h"
 #include "ota.h"
+#include "acme.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,8 @@ static bool bootstrap_cert;
 static esp_timer_handle_t reboot_timer;
 static cJSON *sdr_json(void);
 static cJSON *ota_json(void);
+static cJSON *acme_json(void);
+esp_err_t web_start(void);
 static unsigned claim_failures;
 #define SMALL_BODY 512
 #define TLS_BODY 40000
@@ -341,6 +344,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON_AddItemToObject(o,"weather",weather_json());
     cJSON_AddItemToObject(o,"sdr",sdr_json());
     cJSON_AddItemToObject(o,"ota",ota_json());
+    cJSON_AddItemToObject(o,"acme",acme_json());
     cJSON_AddItemToObject(o,"provisioning",provisioning_json());
     cJSON *console=cJSON_AddObjectToObject(o,"console");
     cJSON_AddStringToObject(console,"mode","mtls");
@@ -470,8 +474,13 @@ static esp_err_t settings_put(httpd_req_t *req, settings_edit_t edit) {
     if(rf_settings_save(&s)!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not save settings");
     return send_json(req,"200 OK",config_json(&s));
 }
+/* {"hostname":"rf1"} and/or {"fqdn":"rf1.example.com"}, the name the certificate is issued for. */
 static bool edit_hostname(rf_management_settings_t *s, const cJSON *b) {
-    return copy_field(s->hostname,sizeof(s->hostname),b,"hostname");
+    bool h=cJSON_GetObjectItemCaseSensitive(b,"hostname")!=NULL,f=cJSON_GetObjectItemCaseSensitive(b,"fqdn")!=NULL;
+    if(!h && !f) return false;
+    if(h && !copy_field(s->hostname,sizeof(s->hostname),b,"hostname")) return false;
+    if(f && !copy_field(s->fqdn,sizeof(s->fqdn),b,"fqdn")) return false;
+    return true;
 }
 /* {"servers":["primary","secondary"]}: exactly two names. */
 static bool edit_ntp(rf_management_settings_t *s, const cJSON *b) {
@@ -517,10 +526,12 @@ static esp_err_t tls_put(httpd_req_t *req) {
     const char *cert=json_string(body,"certificate",RF_PEM_MAX),*key=json_string(body,"private_key",RF_PEM_MAX);
     esp_err_t e=cert && key?rf_provision_set_tls(cert,key):ESP_ERR_INVALID_ARG;
     delete_secret_json(body);
+    if(e==ESP_OK) rf_acme_forget_certificate();
     return stored_reply(req,e);
 }
 static esp_err_t tls_delete(httpd_req_t *req) {
     esp_err_t e=rf_provision_clear_tls();
+    if(e==ESP_OK) rf_acme_forget_certificate();
     if(e!=ESP_OK) return send_error(req,"500 Internal Server Error",esp_err_to_name(e));
     cJSON *o=cJSON_CreateObject();
     cJSON_AddBoolToObject(o,"removed",true);
@@ -569,6 +580,88 @@ static esp_err_t sdr_action(httpd_req_t *req, const char *header, const char *wo
 static esp_err_t sdr_reboot_post(httpd_req_t *req) { return sdr_action(req,"X-Confirm-SDR-Reboot","REBOOT",false); }
 static esp_err_t sdr_power_cycle_post(httpd_req_t *req) { return sdr_action(req,"X-Confirm-SDR-Power-Cycle","POWER-CYCLE",true); }
 /* ---- Firmware updates (as on esp32p4_nts_time_server) ---- */
+static cJSON *acme_json(void) {
+    rf_acme_status_t *a=calloc(1,sizeof(*a));
+    cJSON *o=cJSON_CreateObject();
+    if(!a) return o;
+    rf_acme_status(a);
+    rf_management_settings_t s;
+    bool have=rf_settings_load(&s)==ESP_OK;
+    cJSON_AddStringToObject(o,"fqdn",have?s.fqdn:"");
+    cJSON_AddStringToObject(o,"cloudflare_zone",have?s.cloudflare_zone:"");
+    cJSON_AddBoolToObject(o,"cloudflare_token_present",a->token_present);
+    cJSON_AddBoolToObject(o,"automatic_renewal",have && s.acme_enabled);
+    cJSON_AddBoolToObject(o,"clock_synchronized",rf_time_service_is_synchronized());
+    cJSON *r=cJSON_AddObjectToObject(o,"request");
+    cJSON_AddStringToObject(r,"state",rf_acme_state_name(a->state));
+    cJSON_AddStringToObject(r,"environment",a->production?"production":"staging");
+    cJSON_AddStringToObject(r,"stage",a->stage);
+    if(a->error[0]) cJSON_AddStringToObject(r,"error",a->error); else cJSON_AddNullToObject(r,"error");
+    cJSON_AddNumberToObject(r,"started",(double)a->started);
+    cJSON_AddNumberToObject(r,"finished",(double)a->finished);
+    cJSON *c=cJSON_AddObjectToObject(o,"certificate");
+    cJSON_AddBoolToObject(c,"present",a->cert_present);
+    if(a->cert_present) {
+        cJSON_AddStringToObject(c,"source",!a->cert_from_acme?"manual":a->cert_production?"letsencrypt":"letsencrypt-staging");
+        cJSON_AddStringToObject(c,"hostname",a->cert_hostname);
+        cJSON_AddBoolToObject(c,"hostname_matches",have && a->cert_from_acme && !strcmp(a->cert_hostname,s.fqdn));
+        cJSON_AddStringToObject(c,"issuer",a->cert_issuer);
+        cJSON_AddStringToObject(c,"valid_from",a->cert_valid_from);
+        cJSON_AddStringToObject(c,"valid_to",a->cert_valid_to);
+        if(a->cert_days_left>=0) cJSON_AddNumberToObject(c,"days_left",a->cert_days_left); else cJSON_AddNullToObject(c,"days_left");
+        cJSON_AddStringToObject(c,"sha256",a->cert_sha256);
+    }
+    cJSON_AddBoolToObject(c,"serving",!bootstrap_cert);
+    free(a);
+    return o;
+}
+static esp_err_t acme_get(httpd_req_t *req) { return send_json(req,"200 OK",acme_json()); }
+/* {"production":true} for a trusted certificate, false for Let's Encrypt staging (untrusted, for tests). */
+static esp_err_t acme_issue_post(httpd_req_t *req) {
+    bool production=true;
+    if(req->content_len) {
+        cJSON *body=read_json(req,SMALL_BODY);
+        if(!body) return ESP_OK;
+        const cJSON *p=cJSON_GetObjectItemCaseSensitive(body,"production");
+        bool ok=!p || cJSON_IsBool(p);
+        if(cJSON_IsBool(p)) production=cJSON_IsTrue(p);
+        cJSON_Delete(body);
+        if(!ok) return send_error(req,"400 Bad Request","production must be true or false");
+    }
+    esp_err_t e=rf_acme_issue(production);
+    if(e==ESP_ERR_TIMEOUT) return send_error(req,"503 Service Unavailable","The clock isn't synchronized yet; check the NTP servers");
+    if(e==ESP_ERR_INVALID_ARG) return send_error(req,"409 Conflict","The certificate name isn't inside the Cloudflare zone");
+    if(e==ESP_ERR_INVALID_STATE) {
+        rf_acme_status_t *a=calloc(1,sizeof(*a));
+        bool running=false;
+        if(a) { rf_acme_status(a); running=a->state==RF_ACME_RUNNING; free(a); }
+        return send_error(req,"409 Conflict",running?"A certificate request is already running":
+            "Set the certificate name (fqdn) and the Cloudflare zone and token first");
+    }
+    if(e!=ESP_OK) return send_error(req,"500 Internal Server Error",esp_err_to_name(e));
+    return send_json(req,"202 Accepted",acme_json());
+}
+/* {"api_token":"...","zone_name":"example.com"}: checked with Cloudflare from this board before it's stored. */
+static esp_err_t cloudflare_put(httpd_req_t *req) {
+    cJSON *body=read_json(req,SMALL_BODY);
+    if(!body) return ESP_OK;
+    const char *token=json_string(body,"api_token",256),*zone=json_string(body,"zone_name",RF_FQDN_MAX);
+    int http=0;
+    esp_err_t e=token && zone?rf_acme_set_cloudflare(token,zone,&http):ESP_ERR_INVALID_ARG;
+    delete_secret_json(body);
+    if(e==ESP_ERR_INVALID_ARG) return send_error(req,"400 Bad Request","api_token and a valid zone_name are required");
+    if(e!=ESP_OK) {
+        char msg[120];
+        snprintf(msg,sizeof(msg),"Cloudflare didn't accept the token for that zone (%s, HTTP %d)",esp_err_to_name(e),http);
+        return send_error(req,"502 Bad Gateway",msg);
+    }
+    return send_json(req,"200 OK",acme_json());
+}
+static esp_err_t cloudflare_delete(httpd_req_t *req) {
+    esp_err_t e=rf_acme_clear_cloudflare();
+    if(e!=ESP_OK) return send_error(req,"500 Internal Server Error",esp_err_to_name(e));
+    return send_json(req,"200 OK",acme_json());
+}
 static cJSON *ota_json(void) {
     rf_ota_status_t s;
     rf_ota_status(&s);
@@ -659,7 +752,8 @@ static esp_err_t ota_rollback_post(httpd_req_t *req) {
     return send_json(req,"202 Accepted",o);
 }
 static esp_err_t metrics_get(httpd_req_t *req) {
-    char buf[4096];
+    /* Static: the server handles one request at a time, and this is too big for its stack. */
+    static char buf[6144];
     size_t n=0;
     rf_temp_reading_t r[RF_TEMP_MAX_SENSORS];
     size_t count=rf_temp_snapshot(r,RF_TEMP_MAX_SENSORS);
@@ -701,6 +795,13 @@ static esp_err_t metrics_get(httpd_req_t *req) {
     rf_ota_status(&ota);
     EMIT("# TYPE rf_ota_pending_verify gauge\nrf_ota_pending_verify %d\n",ota.pending_verify?1:0);
     EMIT("# TYPE rf_ota_rollbacks_detected_total counter\nrf_ota_rollbacks_detected_total %lu\n",(unsigned long)ota.rollbacks_detected);
+    rf_acme_status_t *acme=calloc(1,sizeof(*acme));
+    if(acme) {
+        rf_acme_status(acme);
+        if(acme->cert_present) EMIT("# TYPE rf_tls_certificate_expiry_seconds gauge\nrf_tls_certificate_expiry_seconds %lld\n",(long long)acme->cert_expires);
+        EMIT("# TYPE rf_acme_request_failed gauge\nrf_acme_request_failed %d\n",acme->state==RF_ACME_FAILED?1:0);
+        free(acme);
+    }
     rf_sdr_status_t sdr;
     rf_sdr_status(&sdr);
     EMIT("# TYPE rf_sdr_powered gauge\nrf_sdr_powered %d\n",sdr.state==RF_SDR_POWER_OFF?0:1);
@@ -774,6 +875,13 @@ static void free_credentials(void) {
 static volatile bool started;
 /* True once HTTPS management is serving; the OTA soak checks it before confirming. */
 bool web_started(void) { return started; }
+/* Stops HTTPS and starts it again with the stored certificate. Not for use from a request handler. */
+esp_err_t web_restart(void) {
+    if(server) { httpd_ssl_stop(server); server=NULL; }
+    started=false;
+    free_credentials();
+    return web_start();
+}
 bool web_certificate_sha256(char out[65], bool *bootstrap) {
     if(!started || !served_sha256[0]) return false;
     memcpy(out,served_sha256,sizeof(served_sha256));
@@ -820,6 +928,10 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/ota/rollback",.method=HTTP_POST,.handler=ota_rollback_post},
         {.uri="/api/v1/sdr/reboot",.method=HTTP_POST,.handler=sdr_reboot_post},
         {.uri="/api/v1/sdr/power-cycle",.method=HTTP_POST,.handler=sdr_power_cycle_post},
+        {.uri="/api/v1/acme",.method=HTTP_GET,.handler=acme_get},
+        {.uri="/api/v1/acme/issue",.method=HTTP_POST,.handler=acme_issue_post},
+        {.uri="/api/v1/config/cloudflare",.method=HTTP_PUT,.handler=cloudflare_put},
+        {.uri="/api/v1/config/cloudflare",.method=HTTP_DELETE,.handler=cloudflare_delete},
     };
     const httpd_uri_t *routes=claimed?management:enrollment;
     size_t count=claimed?sizeof(management)/sizeof(management[0]):sizeof(enrollment)/sizeof(enrollment[0]);

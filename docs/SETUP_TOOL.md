@@ -1,6 +1,6 @@
 # Setup tool
 
-The setup tool takes a controller from new to managed: firmware, Wi-Fi, ownership, name, NTP servers and network address. It runs on Windows and Linux, as a window or as questions in a terminal. Both run the same steps in the same order. It works like esp32p4_nts_time_server's setup tool, and it can use that tool's credentials, so one management CA can manage both.
+The setup tool takes a controller from new to managed: firmware, Wi-Fi, ownership, name, NTP servers, network address and a Let's Encrypt certificate. It runs on Windows and Linux, as a window or as questions in a terminal. Both run the same steps in the same order. It works like esp32p4_nts_time_server's setup tool, and it can use that tool's credentials, so one management CA can manage both.
 
 It lives in [`tools/setup`](../tools/setup). Each release zip holds it next to the firmware.
 
@@ -33,7 +33,9 @@ Connect the board by its **native USB** port (USB Serial/JTAG). The tool talks t
 | 5. Claim | Sends the CA certificate with the enrollment code. The board restarts, and from then on accepts management only with a certificate from that CA | The board is already claimed |
 | 6. Name | Sets the hostname and the two NTP servers | |
 | 7. Network | Keeps DHCP or sets a static address, then restarts the board to apply this step and the last one | |
-| 8. Finish | Optionally imports the administrator certificate into Windows, saves notes, and shows how to open the dashboard | |
+| 8. DNS | Sets the board's full DNS name, finds the Cloudflare zone with your API token, optionally creates the DNS `A` record, and stores the token on the board, which checks it from its own network | You don't want a Let's Encrypt certificate |
+| 9. Let's Encrypt | The board requests its certificate (optionally a staging one first) and switches HTTPS to it. The tool then checks it the way a browser would | As above, or the board already has a valid one for the same name |
+| 10. Finish | Optionally imports the administrator certificate into Windows, saves notes, and shows how to open the dashboard | |
 
 The tool never touches the RF mute, the filter selection or the SDR board.
 
