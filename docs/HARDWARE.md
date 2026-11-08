@@ -63,6 +63,8 @@ GPIO1, GPIO9 and the PWM frequency can be changed in `menuconfig` under "RF cont
 ## Temperature sensors
 LM75-family sensors (LM75, TMP75, TMP102, PCT2075) on I2C: SDA on GPIO10 and SCL on GPIO11, both with 4.7 kΩ pull-ups to 3.3 V. The internal pull-ups are enabled but are too weak to rely on. Each sensor needs its own address in 0x48 to 0x4F, and every address must be listed in `menuconfig` under "RF controller temperature sensors" (default `0x48`). Only list addresses that hold one of these sensors. The firmware also reads the ESP32-S3's own temperature sensor.
 
+One AHT20 or AHT30 temperature and humidity sensor can share the bus at its fixed address, 0x38. The firmware looks for it at boot and reads temperature and relative humidity from it. Power it from 3.3 V; common breakout boards already carry pull-ups, which is fine alongside the 4.7 kΩ ones. If another kind of chip uses 0x38, turn off "Look for an AHT20 or AHT30 at 0x38" in the same `menuconfig` menu.
+
 ## Weather station receiver
 A CC1101 module receives the outdoor sensor of a VEVOR 7-in-1 weather station (YT60233 or YT60234 in the US on 915 MHz, YT60231 in Europe on 868 MHz). Buy a module built for that band: most cheap CC1101 boards are matched for 433 MHz and lose much of their sensitivity at 915 MHz.
 

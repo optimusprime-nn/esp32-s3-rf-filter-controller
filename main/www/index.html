@@ -165,7 +165,7 @@ function render(s){
   if(!editingFan){$('fanSlider').value=s.fan.percent;$('fanTarget').textContent=''}
   const t=$('temps');t.textContent='';
   if(!s.temperature.sensors.length)row(t,'No sensors','');
-  for(const x of s.temperature.sensors)row(t,x.source==='internal'?'ESP32-S3 (internal)':x.id,x.ok?x.celsius.toFixed(1)+' °C':'not responding');
+  for(const x of s.temperature.sensors)row(t,x.source==='internal'?'ESP32-S3 (internal)':x.source==='aht'?'AHT20/AHT30 ('+x.id+')':x.id,x.ok?x.celsius.toFixed(1)+' °C'+(x.humidity_percent===null?'':', '+x.humidity_percent.toFixed(1)+' % RH'):'not responding');
   const d=$('device');d.textContent='';
   row(d,'Hostname',s.device.hostname);row(d,'IPv4',s.device.ipv4||'none');row(d,'Firmware',s.device.firmware);
   row(d,'Uptime',Math.floor(s.system.uptime_ms/1000)+' s');row(d,'Time',s.time.synchronized?new Date(s.time.unix_time*1000).toISOString().replace('.000',''):'not synchronised');

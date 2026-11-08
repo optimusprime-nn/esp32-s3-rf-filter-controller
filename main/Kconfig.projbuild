@@ -61,6 +61,14 @@ menu "RF controller temperature sensors"
             hold one of these sensors: another chip at the same address would be
             read as a temperature.
 
+    config RF_TEMP_AHT_ENABLE
+        bool "Look for an AHT20 or AHT30 at 0x38"
+        default y
+        help
+            Probes address 0x38 at boot and, if an AHT20 or AHT30 answers, reads
+            its temperature and relative humidity every 2 seconds. Turn this off
+            if another kind of chip uses 0x38 on this bus.
+
 endmenu
 
 menu "RF controller weather station receiver"
