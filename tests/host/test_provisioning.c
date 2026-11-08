@@ -99,18 +99,26 @@ static void test_line(void) {
     char buf[8];
     rf_line_t l;
     bool erased;
-    rf_line_init(&l,buf,sizeof(buf));
+    rf_line_init(&l,buf,sizeof(buf),false);
     CHECK(feed(&l,"ab\bc\r")==RF_LINE_DONE && !strcmp(buf,"ac"));
-    rf_line_init(&l,buf,sizeof(buf));
-    l.last_cr=true;
+    rf_line_init(&l,buf,sizeof(buf),true);
     CHECK(rf_line_feed(&l,'\n',&erased)==RF_LINE_MORE && l.len==0);
     CHECK(feed(&l,"x\n")==RF_LINE_DONE && !strcmp(buf,"x"));
-    rf_line_init(&l,buf,sizeof(buf));
+    rf_line_init(&l,buf,sizeof(buf),false);
     CHECK(feed(&l,"\b\x1b y\x7f\r")==RF_LINE_DONE && !strcmp(buf," "));
-    rf_line_init(&l,buf,sizeof(buf));
+    rf_line_init(&l,buf,sizeof(buf),false);
     CHECK(feed(&l,"abcdefghij\r")==RF_LINE_OVERFLOW && strlen(buf)==7);
-    rf_line_init(&l,buf,sizeof(buf));
+    rf_line_init(&l,buf,sizeof(buf),false);
     CHECK(feed(&l,"secret\x03")==RF_LINE_CANCEL);
+    /* CR+LF Enter, as miniterm sends: the command line ends at CR, and the LF must
+       not end the next line (the SSID prompt) empty. */
+    rf_line_init(&l,buf,sizeof(buf),false);
+    CHECK(feed(&l,"wifi\r")==RF_LINE_DONE && !strcmp(buf,"wifi") && l.last_cr);
+    rf_line_init(&l,buf,sizeof(buf),l.last_cr);
+    CHECK(feed(&l,"\nnet\r")==RF_LINE_DONE && !strcmp(buf,"net"));
+    /* A lone LF still ends an empty line when no CR came before it. */
+    rf_line_init(&l,buf,sizeof(buf),false);
+    CHECK(feed(&l,"\n")==RF_LINE_DONE && l.len==0);
 }
 int main(void) {
     rf_provision_status_t s;

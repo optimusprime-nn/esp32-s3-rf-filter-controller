@@ -21,15 +21,19 @@ static void put(const char *s) {
     usb_serial_jtag_write_bytes(s,strlen(s),pdMS_TO_TICKS(100));
 }
 /* Returns true for a complete line. Secrets are never echoed back to the host. */
+/* Carries CR state between lines, so a terminal sending CR+LF for Enter (such as
+   miniterm) doesn't leave an LF that ends the next line empty. */
+static bool s_after_cr;
 static bool read_line(char *buf, size_t cap, bool echo) {
     rf_line_t line;
-    rf_line_init(&line,buf,cap);
+    rf_line_init(&line,buf,cap,s_after_cr);
     for(;;) {
         unsigned char c;
         if(usb_serial_jtag_read_bytes(&c,1,portMAX_DELAY)!=1) continue;
         size_t before=line.len;
         bool erased;
         rf_line_result_t r=rf_line_feed(&line,c,&erased);
+        s_after_cr=line.last_cr;
         if(r==RF_LINE_DONE) { put("\r\n"); return true; }
         if(r==RF_LINE_CANCEL) { put("\r\nCancelled\r\n"); return false; }
         if(r==RF_LINE_OVERFLOW) { put("\r\nERROR: line too long\r\n"); return false; }

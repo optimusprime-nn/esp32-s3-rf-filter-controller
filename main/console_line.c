@@ -1,7 +1,7 @@
 #include "console_line.h"
 #define CTRL_C 0x03
-void rf_line_init(rf_line_t *l, char *buf, size_t cap) {
-    *l=(rf_line_t){.buf=buf,.cap=cap};
+void rf_line_init(rf_line_t *l, char *buf, size_t cap, bool after_cr) {
+    *l=(rf_line_t){.buf=buf,.cap=cap,.last_cr=after_cr};
     buf[0]='\0';
 }
 rf_line_result_t rf_line_feed(rf_line_t *l, unsigned char c, bool *erased) {
