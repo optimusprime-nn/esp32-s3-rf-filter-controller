@@ -49,6 +49,7 @@ static unsigned claim_failures;
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern const char weather_html_start[] asm("_binary_weather_html_start");
 extern esp_err_t rf_network_get_ip(char *out, size_t len);
+extern esp_err_t rf_network_get_info(char *ip, char *netmask, char *gateway, size_t len);
 static int64_t now_ms(void) {
     return esp_timer_get_time()/1000;
 }
@@ -313,7 +314,12 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON *dev=cJSON_AddObjectToObject(o,"device");
     cJSON_AddStringToObject(dev,"hostname",s.hostname);
     cJSON_AddStringToObject(dev,"fqdn",s.fqdn);
-    if(rf_network_get_ip(ip,sizeof(ip))==ESP_OK) cJSON_AddStringToObject(dev,"ipv4",ip); else cJSON_AddNullToObject(dev,"ipv4");
+    char mask[16],gw[16];
+    if(rf_network_get_info(ip,mask,gw,sizeof(ip))==ESP_OK) {
+        cJSON_AddStringToObject(dev,"ipv4",ip);
+        cJSON_AddStringToObject(dev,"netmask",mask);
+        cJSON_AddStringToObject(dev,"gateway",gw);
+    } else cJSON_AddNullToObject(dev,"ipv4");
     cJSON_AddStringToObject(dev,"mac",mac_text);
     cJSON_AddStringToObject(dev,"firmware",app->version);
     cJSON_AddStringToObject(dev,"idf",app->idf_ver);
@@ -735,11 +741,17 @@ static esp_err_t load_server_credentials(size_t *cert_len) {
     bootstrap_cert=true;
     return rf_bootstrap_tls_load(&server_cert,cert_len,&server_key,&server_key_len);
 }
+/* SHA-256 of the certificate HTTPS serves, for the USB console's status command. */
+static char served_sha256[65];
 /* The setup tool reads this line from the console and pins the certificate by it. */
 static void log_server_fingerprint(size_t cert_len) {
     char hex[65];
+    served_sha256[0]=0;
     if(bootstrap_cert) {
-        if(rf_bootstrap_tls_sha256(hex)==ESP_OK) ESP_LOGW(TAG,"Bootstrap certificate SHA-256: %s",hex);
+        if(rf_bootstrap_tls_sha256(hex)==ESP_OK) {
+            ESP_LOGW(TAG,"Bootstrap certificate SHA-256: %s",hex);
+            memcpy(served_sha256,hex,sizeof(served_sha256));
+        }
         return;
     }
     mbedtls_x509_crt crt;
@@ -750,6 +762,7 @@ static void log_server_fingerprint(size_t cert_len) {
        psa_hash_compute(PSA_ALG_SHA_256,crt.raw.p,crt.raw.len,d,sizeof(d),&n)==PSA_SUCCESS && n==32) {
         rf_hex_upper(d,sizeof(d),hex);
         ESP_LOGW(TAG,"Server certificate SHA-256: %s",hex);
+        memcpy(served_sha256,hex,sizeof(served_sha256));
     }
     mbedtls_x509_crt_free(&crt);
 }
@@ -761,6 +774,12 @@ static void free_credentials(void) {
 static volatile bool started;
 /* True once HTTPS management is serving; the OTA soak checks it before confirming. */
 bool web_started(void) { return started; }
+bool web_certificate_sha256(char out[65], bool *bootstrap) {
+    if(!started || !served_sha256[0]) return false;
+    memcpy(out,served_sha256,sizeof(served_sha256));
+    *bootstrap=bootstrap_cert;
+    return true;
+}
 esp_err_t web_start(void) {
     if(server) return ESP_ERR_INVALID_STATE;
     size_t cert_len=0,ca_len=0;

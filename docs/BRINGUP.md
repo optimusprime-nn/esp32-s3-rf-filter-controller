@@ -60,6 +60,8 @@ Run `set-wifi`. The network must be WPA2 on 2.4 GHz. Press reset, then run `stat
 ## 5. Claim the controller
 The commands in this step and the next are for bash (Linux, macOS, Git Bash or WSL). In Windows PowerShell, use the PowerShell versions given with them: PowerShell has no `<` redirect, and its `curl` is a different command, so call `curl.exe`.
 
+The [setup tool](SETUP_TOOL.md) does this step and step 4 for you, and checks the fingerprint itself. The rest of this step does it by hand.
+
 You need a management CA and an admin client certificate. Use the files the esp32p4_nts_time_server setup tool made, if you already have them, or make them as in [API.md](API.md#making-a-management-ca-by-hand).
 
 1. Run `enrollment` on the USB console and note the code and the bootstrap certificate fingerprint.
@@ -133,7 +135,7 @@ Wire the CC1101 as in [HARDWARE.md](HARDWARE.md#weather-station-receiver). Witho
 
 If nothing is heard after a few minutes with the sensor close by, check the module's band and the antenna first. Then turn on "Invert the FSK data" in `menuconfig`, rebuild and flash, and try again. Tell me which setting worked, so the default can be fixed.
 
-## 8. Check the SDR resets
+## 9. Check the SDR resets
 Do this before the Radxa is wired, with a meter on GPIO4 and GPIO5. See [HARDWARE.md](HARDWARE.md#sdr-board-resets) for the wiring.
 
 | Check | Expected |
@@ -144,7 +146,7 @@ Do this before the Radxa is wired, with a meter on GPIO4 and GPIO5. See [HARDWAR
 | Another `sdr-power-cycle` within 10 s | `ERROR: an SDR reset is in progress or just finished` |
 | Press reset on the controller | GPIO5 stays low, so the Radxa's power isn't cut |
 
-## 9. Test a firmware update
+## 10. Test a firmware update
 The first time, flash over USB as in step 1, because rollback needs the new bootloader; OTA can't replace the bootloader. Then make a small change, such as the version, build, and upload it from the dashboard's Firmware section, or:
 
 ```sh

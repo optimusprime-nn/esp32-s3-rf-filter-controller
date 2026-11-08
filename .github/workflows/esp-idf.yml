@@ -54,14 +54,23 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: rf-controller-esp32s3-idf-v6.1
           path: fw
-      - name: Package firmware
+      - name: Package firmware and setup tool
         run: |
           name="rf-controller-esp32s3-${GITHUB_REF_NAME}"
-          (cd fw && zip -r "../${name}.zip" .)
+          dest="pkg/${name}"
+          mkdir -p "${dest}/firmware"
+          # The artifact keeps the build/ prefix; flasher_args.json paths are relative to it.
+          cp -r fw/build/. "${dest}/firmware/"
+          cp fw/sdkconfig "${dest}/firmware/"
+          cp -r tools/setup "${dest}/setup"
+          rm -rf "${dest}/setup/tests"
+          cp docs/SETUP_TOOL.md "${dest}/"
+          (cd pkg && zip -r "../${name}.zip" "${name}")
           sha256sum "${name}.zip" > SHA256SUMS.txt
       - name: Publish GitHub release
         env:
