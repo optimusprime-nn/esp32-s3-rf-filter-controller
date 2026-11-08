@@ -9,7 +9,7 @@ Request bodies are JSON with `Content-Type: application/json` unless stated; a J
 
 ## Server certificate
 
-The controller makes its own self-signed bootstrap certificate at first boot (P-256, `CN=esp32s3-rf-bootstrap`) and keeps it across reboots. No client trusts it, so check it by fingerprint. The SHA-256 fingerprint is printed on the serial console at every boot, and on the USB console by `enrollment`:
+The controller makes its own self-signed bootstrap certificate at first boot (P-256, `CN=esp32s3-rf-bootstrap`) and keeps it across reboots. No client trusts it, so check it by fingerprint. The SHA-256 fingerprint is printed on the serial console at every boot, and on the USB console by `enrollment` and `status`:
 
 ```text
 W (…) web_tls: Bootstrap certificate SHA-256: 3F2A…
@@ -80,7 +80,7 @@ To use the dashboard in a browser, import your client certificate (for example `
 
 | Section | Fields |
 |---|---|
-| `device` | `hostname`, `fqdn`, `ipv4` (`null` without an address), `mac`, `firmware`, `idf` |
+| `device` | `hostname`, `fqdn`, `ipv4` (`null` without an address), `netmask` and `gateway` in use (only with an address), `mac`, `firmware`, `idf` |
 | `system` | `uptime_ms`, `reset_reason`, `heap_internal_free`, `heap_internal_min_free`, `heap_psram_free` |
 | `time` | `synchronized`, `unix_time`, `ntp_servers` (the two servers, in order) |
 | `rf` | `filter` (1 to 4) |

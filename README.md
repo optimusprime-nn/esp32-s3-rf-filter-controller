@@ -4,7 +4,7 @@ ESP-IDF firmware for two HMC7992 SP4T RF switches controlling four filter paths,
 
 Development is in progress. Hardware and security validation required before deployment.
 
-To flash and test a board, follow [the bring-up guide](docs/BRINGUP.md). The HTTPS management API is specified in [docs/API.md](docs/API.md).
+To flash and test a board, follow [the bring-up guide](docs/BRINGUP.md). To set up a board for use, the [setup tool](docs/SETUP_TOOL.md) writes the firmware, joins Wi-Fi, claims the board and sets its name and address. The HTTPS management API is specified in [docs/API.md](docs/API.md).
 
 ## Build
 

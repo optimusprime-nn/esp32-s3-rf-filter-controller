@@ -19,6 +19,7 @@ static const char *TAG="usb_console";
 static void show_sdr(void);
 #define PEM_LINE_MAX 128
 extern esp_err_t rf_network_get_ip(char *out, size_t len);
+extern bool web_certificate_sha256(char out[65], bool *bootstrap);
 static void put(const char *s) {
     usb_serial_jtag_write_bytes(s,strlen(s),pdMS_TO_TICKS(100));
 }
@@ -185,6 +186,12 @@ static void show_status(void) {
     put("Wi-Fi credentials: "); put(s.wifi?"provisioned\r\n":"missing\r\n");
     put("Management: "); put(rf_ownership_claimed()?"claimed (mTLS)\r\n":"unclaimed; run enrollment\r\n");
     put("TLS certificate and key: "); put(s.tls?"provisioned\r\n":"missing\r\n");
+    /* Same wording as the boot log, so the setup tool can pin HTTPS without resetting the board. */
+    char hex[65];
+    bool bootstrap;
+    if(web_certificate_sha256(hex,&bootstrap)) {
+        put(bootstrap?"Bootstrap certificate SHA-256: ":"Server certificate SHA-256: "); put(hex); put("\r\n");
+    }
     show_sdr();
 }
 static void show_sdr(void) {

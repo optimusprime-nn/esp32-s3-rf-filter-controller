@@ -27,7 +27,7 @@ The fan runs from 25 kHz PWM on GPIO1, with its tachometer on GPIO9. The speed i
 A CC1101 on SPI (GPIO12 to GPIO16) receives a VEVOR 7-in-1 weather station (YT60233/YT60234 on 915 MHz by default). Readings appear in the API, metrics, dashboard and the console's `weather` command. The station filter can be changed at run time and is saved. The `/weather` page shows current conditions and charts of up to 48 hours of history, recorded once a minute in PSRAM and lost at reboot. Without a CC1101 the firmware runs as before and reports the receiver as missing. Decoding is host-tested against rtl_433's sample packet; reception has not been tried on hardware.
 
 ## Explicit nonfunctional features
-- No support for this controller in the esp32p4_nts_time_server setup tool yet; claim it by hand as in BRINGUP.md.
+- The [setup tool](SETUP_TOOL.md) doesn't set up ACME or Cloudflare yet, since the firmware has no ACME engine.
 - OTA images aren't signed (no secure boot). Rollback needs the bootloader built with this firmware, so a board flashed before OTA support needs one more USB flash.
 - No ACME transaction engine or Cloudflare token storage ported yet; HTTPS uses the bootstrap certificate or one stored by hand.
 - No USB command for network settings; use the API.

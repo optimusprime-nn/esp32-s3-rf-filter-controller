@@ -54,6 +54,14 @@ esp_err_t rf_network_get_ip(char *out, size_t len) {
     if(!sta_netif || esp_netif_get_ip_info(sta_netif,&ip)!=ESP_OK || !ip.ip.addr) return ESP_ERR_INVALID_STATE;
     return esp_ip4addr_ntoa(&ip.ip,out,(int)len)?ESP_OK:ESP_ERR_INVALID_SIZE;
 }
+/* Address, netmask and gateway in use now, from DHCP or the static settings. */
+esp_err_t rf_network_get_info(char *ip, char *netmask, char *gateway, size_t len) {
+    esp_netif_ip_info_t i;
+    if(!sta_netif || esp_netif_get_ip_info(sta_netif,&i)!=ESP_OK || !i.ip.addr) return ESP_ERR_INVALID_STATE;
+    if(!esp_ip4addr_ntoa(&i.ip,ip,(int)len) || !esp_ip4addr_ntoa(&i.netmask,netmask,(int)len) ||
+       !esp_ip4addr_ntoa(&i.gw,gateway,(int)len)) return ESP_ERR_INVALID_SIZE;
+    return ESP_OK;
+}
 esp_err_t network_start(const rf_management_settings_t *settings) {
     if(!settings || !rf_settings_valid(settings)) return ESP_ERR_INVALID_ARG;
     ESP_ERROR_CHECK(esp_netif_init());
