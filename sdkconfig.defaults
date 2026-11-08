@@ -15,3 +15,6 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=2
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # api.cloudflare.com and Let's Encrypt chains need cross-signed roots, as on the time server.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+# TLS buffers (about 35 KB per open connection) in PSRAM, so dashboard sessions and
+# certificate requests don't exhaust internal RAM.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
