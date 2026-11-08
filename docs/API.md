@@ -55,6 +55,8 @@ Destructive actions need a header with a fixed word. Without it the device answe
 | Header | Value | Used by |
 |---|---|---|
 | `X-Confirm-Reboot` | `REBOOT` | `POST /api/v1/system/reboot` |
+| `X-Confirm-SDR-Reboot` | `REBOOT` | `POST /api/v1/sdr/reboot` |
+| `X-Confirm-SDR-Power-Cycle` | `POWER-CYCLE` | `POST /api/v1/sdr/power-cycle` |
 
 ## Pages
 
@@ -148,6 +150,18 @@ The hostname, NTP and network calls answer with the same JSON as `GET /api/v1/co
 
 The ACME certificate engine isn't implemented, so `acme` is read-only.
 
+## SDR board
+
+The SDR board (Radxa Zero 3) can be rebooted cleanly or power-cycled. See [HARDWARE.md](HARDWARE.md#sdr-board-resets) for the wiring.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/sdr` | `state` (`idle`, `reboot_requested` or `power_off`), `powered`, `soft_resets` and `hard_resets` since the controller booted, `last_action` (`reboot`, `power_cycle` or `null`), `last_action_age_ms`, `soft_reset_gpio`, `relay_gpio`. Also in the status `sdr` section |
+| POST | `/api/v1/sdr/reboot` | Ask Linux on the Radxa to reboot: GPIO4 is pulled low for 1 s. Needs `X-Confirm-SDR-Reboot: REBOOT`. `202` with the fields above and `"action":"reboot"` |
+| POST | `/api/v1/sdr/power-cycle` | Cut the Radxa's power for 5 s with the relay on GPIO5. Unsaved work on the Radxa is lost. Needs `X-Confirm-SDR-Power-Cycle: POWER-CYCLE`. `202` with `"action":"power_cycle"` |
+
+Both answer `409` while a reset is running and for 10 seconds after one ends.
+
 ## System
 
 | Method | Path | Purpose |
@@ -172,6 +186,8 @@ The ACME certificate engine isn't implemented, so `acme` is read-only.
 | `rf_weather_wind_avg_kmh`, `rf_weather_wind_gust_kmh`, `rf_weather_wind_direction_degrees` | gauge | `station` |
 | `rf_weather_rain_mm_total` | counter | `station`. Resets when the sensor loses power |
 | `rf_weather_uv_index`, `rf_weather_light_lux` | gauge | `station` |
+| `rf_sdr_powered` | gauge | `0` while the relay has the Radxa's power cut |
+| `rf_sdr_resets_total` | counter | `type`: `reboot` or `power_cycle`. Since the controller booted |
 | `rf_heap_internal_free_bytes` | gauge | |
 
 ## Examples

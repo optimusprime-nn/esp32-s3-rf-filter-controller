@@ -11,7 +11,7 @@
 #include "fan.h"
 #include "temp_sensor.h"
 #include "weather.h"
-#define RADXA_RESET_GPIO GPIO_NUM_6
+#include "sdr_power.h"
 extern esp_err_t config_store_init(void);
 extern esp_err_t config_store_load_port(uint8_t *port);
 extern esp_err_t network_start(const rf_management_settings_t *settings);
@@ -19,17 +19,19 @@ extern esp_err_t web_start(void);
 extern esp_err_t rf_usb_console_start(void);
 static const char *TAG="rf_filter";
 void app_main(void) {
+    /* First, so the SDR's reboot line and power relay are idle as early as possible. */
+    esp_err_t e=rf_sdr_start();
+    if(e!=ESP_OK) ESP_LOGE(TAG,"SDR reset lines unavailable: %s",esp_err_to_name(e));
     gpio_set_level(RF_MUTE_GPIO,1);
-    gpio_set_level(RADXA_RESET_GPIO,1);
     gpio_set_level(RF_A_GPIO,0);
     gpio_set_level(RF_B_GPIO,0);
     gpio_config_t cfg={
-        .pin_bit_mask=(1ULL<<RF_A_GPIO)|(1ULL<<RF_B_GPIO)|(1ULL<<RADXA_RESET_GPIO)|(1ULL<<RF_MUTE_GPIO),
+        .pin_bit_mask=(1ULL<<RF_A_GPIO)|(1ULL<<RF_B_GPIO)|(1ULL<<RF_MUTE_GPIO),
         .mode=GPIO_MODE_OUTPUT,.pull_up_en=GPIO_PULLUP_DISABLE,
         .pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
     ESP_ERROR_CHECK(gpio_config(&cfg));
-    /* A panic here would reboot-loop and release the RF inhibit output on every reset. */
-    esp_err_t e=config_store_init();
+    /* A panic here would reboot-loop and release the RF mute output on every reset. */
+    e=config_store_init();
     if(e!=ESP_OK) { ESP_LOGE(TAG,"NVS unavailable, staying offline: %s",esp_err_to_name(e)); return; }
     /* Prints the enrollment code on an unclaimed board, for the setup tool to read. */
     e=rf_ownership_init();

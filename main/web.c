@@ -26,6 +26,7 @@
 #include "temp_sensor.h"
 #include "time_service.h"
 #include "weather.h"
+#include "sdr_power.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,7 @@ static char *server_cert,*server_key,*client_ca;
 static size_t server_key_len;
 static bool bootstrap_cert;
 static esp_timer_handle_t reboot_timer;
+static cJSON *sdr_json(void);
 static unsigned claim_failures;
 #define SMALL_BODY 512
 #define TLS_BODY 40000
@@ -329,6 +331,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON_AddItemToObject(o,"fan",fan_json());
     cJSON_AddItemToObject(o,"temperature",temperature_json());
     cJSON_AddItemToObject(o,"weather",weather_json());
+    cJSON_AddItemToObject(o,"sdr",sdr_json());
     cJSON_AddItemToObject(o,"provisioning",provisioning_json());
     cJSON *console=cJSON_AddObjectToObject(o,"console");
     cJSON_AddStringToObject(console,"mode","mtls");
@@ -523,6 +526,39 @@ static esp_err_t reboot_post(httpd_req_t *req) {
     cJSON_AddStringToObject(o,"action","reboot");
     return send_json(req,"202 Accepted",o);
 }
+static cJSON *sdr_json(void) {
+    rf_sdr_status_t s;
+    rf_sdr_status(&s);
+    cJSON *o=cJSON_CreateObject();
+    cJSON_AddStringToObject(o,"state",rf_sdr_state_name(s.state));
+    cJSON_AddBoolToObject(o,"powered",s.state!=RF_SDR_POWER_OFF);
+    cJSON_AddNumberToObject(o,"soft_resets",s.soft_resets);
+    cJSON_AddNumberToObject(o,"hard_resets",s.hard_resets);
+    if(s.last_action_ms<0) { cJSON_AddNullToObject(o,"last_action"); cJSON_AddNullToObject(o,"last_action_age_ms"); }
+    else {
+        cJSON_AddStringToObject(o,"last_action",s.last_was_hard?"power_cycle":"reboot");
+        cJSON_AddNumberToObject(o,"last_action_age_ms",(double)(now_ms()-s.last_action_ms));
+    }
+    cJSON_AddNumberToObject(o,"soft_reset_gpio",CONFIG_RF_SDR_SOFT_RESET_GPIO);
+    cJSON_AddNumberToObject(o,"relay_gpio",CONFIG_RF_SDR_RELAY_GPIO);
+    return o;
+}
+static esp_err_t sdr_get(httpd_req_t *req) { return send_json(req,"200 OK",sdr_json()); }
+static esp_err_t sdr_action(httpd_req_t *req, const char *header, const char *word, bool hard) {
+    if(!header_equals(req,header,word)) {
+        char m[64];
+        snprintf(m,sizeof(m),"Send %s: %s",header,word);
+        return send_error(req,"412 Precondition Failed",m);
+    }
+    esp_err_t e=hard?rf_sdr_hard_reset():rf_sdr_soft_reset();
+    if(e==ESP_ERR_INVALID_STATE) return send_error(req,"409 Conflict","An SDR reset is in progress or just finished; try again shortly");
+    if(e!=ESP_OK) return send_error(req,"500 Internal Server Error",esp_err_to_name(e));
+    cJSON *o=sdr_json();
+    cJSON_AddStringToObject(o,"action",hard?"power_cycle":"reboot");
+    return send_json(req,"202 Accepted",o);
+}
+static esp_err_t sdr_reboot_post(httpd_req_t *req) { return sdr_action(req,"X-Confirm-SDR-Reboot","REBOOT",false); }
+static esp_err_t sdr_power_cycle_post(httpd_req_t *req) { return sdr_action(req,"X-Confirm-SDR-Power-Cycle","POWER-CYCLE",true); }
 static esp_err_t metrics_get(httpd_req_t *req) {
     char buf[4096];
     size_t n=0;
@@ -562,6 +598,12 @@ static esp_err_t metrics_get(httpd_req_t *req) {
         EMIT("# TYPE rf_weather_uv_index gauge\nrf_weather_uv_index{station=\"%s\"} %d\n",id,(int)r->uv_index);
         EMIT("# TYPE rf_weather_light_lux gauge\nrf_weather_light_lux{station=\"%s\"} %lu\n",id,(unsigned long)r->light_lux);
     }
+    rf_sdr_status_t sdr;
+    rf_sdr_status(&sdr);
+    EMIT("# TYPE rf_sdr_powered gauge\nrf_sdr_powered %d\n",sdr.state==RF_SDR_POWER_OFF?0:1);
+    EMIT("# TYPE rf_sdr_resets_total counter\n");
+    EMIT("rf_sdr_resets_total{type=\"reboot\"} %lu\n",(unsigned long)sdr.soft_resets);
+    EMIT("rf_sdr_resets_total{type=\"power_cycle\"} %lu\n",(unsigned long)sdr.hard_resets);
     EMIT("# TYPE rf_heap_internal_free_bytes gauge\nrf_heap_internal_free_bytes %u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 #undef EMIT
     if(n>=sizeof(buf)) return send_error(req,"500 Internal Server Error","Metrics too large");
@@ -652,6 +694,9 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/config/tls",.method=HTTP_PUT,.handler=tls_put},
         {.uri="/api/v1/config/tls",.method=HTTP_DELETE,.handler=tls_delete},
         {.uri="/api/v1/system/reboot",.method=HTTP_POST,.handler=reboot_post},
+        {.uri="/api/v1/sdr",.method=HTTP_GET,.handler=sdr_get},
+        {.uri="/api/v1/sdr/reboot",.method=HTTP_POST,.handler=sdr_reboot_post},
+        {.uri="/api/v1/sdr/power-cycle",.method=HTTP_POST,.handler=sdr_power_cycle_post},
     };
     const httpd_uri_t *routes=claimed?management:enrollment;
     size_t count=claimed?sizeof(management)/sizeof(management[0]):sizeof(enrollment)/sizeof(enrollment[0]);
