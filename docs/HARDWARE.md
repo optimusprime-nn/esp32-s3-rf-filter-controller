@@ -45,16 +45,18 @@ HMC7992 has no all-off code. Unselected RF ports are terminated. A mute interloc
 RF modules need clean 3.3 V and common reference; verify board header orientation, power draw, voltage levels, and filter power ratings before connecting RF.
 
 ## Fan
-Defaults assume a 4-wire 12 V PC fan. The fan's PWM input has its own pull-up, often to 5 V, so never connect it straight to a GPIO.
+A 4-wire 12 V PC fan, with its PWM input driven from GPIO1 through a 3.3 V to 5 V level shifter. The fan's PWM input has its own pull-up, often to 5 V, so never connect it straight to a GPIO.
 
 | Fan wire | Connect to |
 |---|---|
-| GND | Ground, shared with the ESP32-S3 |
-| +12 V | 12 V supply |
-| PWM | Collector of an NPN transistor, such as a 2N3904 or MMBT3904, or the drain of a logic-level N-MOSFET such as a 2N7002. Emitter or source to ground. Drive the base from GPIO1 through 1 kΩ, or the gate directly, with a 10 kΩ pull-down to ground |
-| Tach | GPIO9, with a 10 kΩ pull-up to **3.3 V**. Never pull it up to 12 V |
+| GND | Ground, shared with the ESP32-S3 and the level shifter |
+| +12 V | 12 V supply. Only the fan's power is 12 V; its PWM and tach wires are logic level |
+| PWM | The level shifter's 5 V output for GPIO1. Power the shifter's low side from 3.3 V and its high side from 5 V |
+| Tach | GPIO9, with a 10 kΩ pull-up to **3.3 V**. Never pull it up to 5 V or 12 V. The tach is open collector, so it doesn't need the level shifter; if it does go through a bidirectional shifter, keep the GPIO side at 3.3 V |
 
-The transistor inverts the signal, which is why "Invert PWM output" is on by default. The pull-down keeps the transistor off while the GPIO isn't driven, during reset or before the firmware starts, so the fan's own pull-up runs it at full speed. A 3-wire fan needs a low-side MOSFET switching its ground instead: turn the inversion off, and expect tach readings to be unreliable while it's being switched.
+The shifter doesn't invert the signal, so "Invert PWM output" is off by default: 100% gives a 5 V PWM line that's high all the time. While the ESP32-S3 resets or before the firmware starts, GPIO1 isn't driven. A bidirectional shifter of the BSS138 kind pulls its 5 V side high then, so the fan runs at full speed, which is the safe default. A buffer-type shifter such as a 74AHCT125 needs a 10 kΩ pull-up from GPIO1 to 3.3 V to do the same.
+
+With an open-collector transistor driver instead of a shifter, turn "Invert PWM output" on. A 3-wire fan needs a low-side MOSFET switching its ground: leave the inversion off, and expect tach readings to be unreliable while it's being switched.
 
 GPIO1, GPIO9 and the PWM frequency can be changed in `menuconfig` under "RF controller fan".
 

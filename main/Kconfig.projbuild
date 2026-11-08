@@ -10,11 +10,11 @@ menu "RF controller fan"
 
     config RF_FAN_PWM_INVERTED
         bool "Invert PWM output"
-        default y
+        default n
         help
-            Enable for the usual open-collector driver, where a high GPIO pulls the
-            fan's PWM line low. With a pull-down on the transistor's base or gate,
-            an undriven GPIO then leaves the fan at full speed.
+            Off for a non-inverting 3.3 V to 5 V level shifter between the GPIO and
+            the fan's PWM input, as on this board. Turn it on for an open-collector
+            transistor driver instead, where a high GPIO pulls the PWM line low.
 
     config RF_FAN_PWM_FREQ_HZ
         int "PWM frequency (Hz)"
