@@ -103,7 +103,7 @@ Also check the lockout once, before claiming: five wrong codes give `429 Enrollm
 | Watch the dashboard for 10 seconds | Uptime, fan RPM and temperatures update every second |
 | `curl` with the client certificate and `-X POST -H 'X-Confirm-Reboot: REBOOT' .../api/v1/system/reboot` | `202`, then the controller reboots and its bootstrap fingerprint is unchanged |
 
-In PowerShell, write `curl.exe` and quote `@file` arguments, as in step 5. JSON bodies need their inner quotes escaped for Windows PowerShell 5.1, for example `-d '{\"filter\":2}'`.
+In PowerShell, write `curl.exe` and quote `@file` arguments, as in step 5. Windows' own `curl.exe` can't load PEM client certificates (it fails with `0x80092002`), so give it the `.p12` instead: `--cert-type P12 --cert admin-client.p12 --pass <p12-password>`. The `curl` in Git Bash or WSL takes the PEM files as shown. JSON bodies need their inner quotes escaped for Windows PowerShell 5.1, for example `-d '{\"filter\":2}'`.
 
 [API.md](API.md) has `curl` examples for every call.
 
