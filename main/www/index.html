@@ -91,7 +91,8 @@ select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--li
 <h2>Network (applies after reboot)</h2>
 <form id="netForm">
 <label>Hostname<input id="hostname" maxlength="63"></label>
-<label>NTP server<input id="ntp" maxlength="253"></label>
+<label>NTP server 1<input id="ntp1" maxlength="253"></label>
+<label>NTP server 2<input id="ntp2" maxlength="253"></label>
 <label class="row" style="display:flex;color:var(--text)"><input id="dhcp" type="checkbox"> Use DHCP</label>
 <label>Address<input id="address"></label>
 <label>Netmask<input id="netmask"></label>
@@ -188,7 +189,7 @@ let busy=false;
 async function refresh(){if(busy)return;busy=true;try{render(await api('GET','/api/v1/status'))}catch(e){msg(e.message,true)}finally{busy=false}}
 async function loadConfig(){
   try{const c=await api('GET','/api/v1/config');
-    $('hostname').value=c.hostname;$('ntp').value=c.ntp_server;$('dhcp').checked=c.network.dhcp;
+    $('hostname').value=c.hostname;$('ntp1').value=c.ntp_servers[0];$('ntp2').value=c.ntp_servers[1];$('dhcp').checked=c.network.dhcp;
     for(const k of['address','netmask','gateway','dns'])$(k).value=c.network[k];syncDhcp()}catch(e){msg(e.message,true)}
 }
 function syncDhcp(){for(const k of['address','netmask','gateway','dns'])$(k).disabled=$('dhcp').checked}
@@ -197,7 +198,7 @@ $('fanSlider').oninput=()=>{editingFan=true;$('fanTarget').textContent='Set to '
 $('fanSet').onclick=()=>api('PUT','/api/v1/fan',{percent:+$('fanSlider').value}).then(f=>{editingFan=false;msg('Fan set to '+f.percent+'%');refresh()}).catch(e=>msg(e.message,true));
 $('netForm').onsubmit=async e=>{e.preventDefault();
   try{await api('PUT','/api/v1/config/hostname',{hostname:$('hostname').value});
-    await api('PUT','/api/v1/config/ntp',{server:$('ntp').value});
+    await api('PUT','/api/v1/config/ntp',{servers:[$('ntp1').value,$('ntp2').value]});
     const n=$('dhcp').checked?{dhcp:true}:{dhcp:false,address:$('address').value,netmask:$('netmask').value,gateway:$('gateway').value,dns:$('dns').value};
     await api('PUT','/api/v1/config/network',n);msg('Saved. Reboot to apply.')}catch(err){msg(err.message,true)}};
 $('reboot').onclick=()=>{if(!confirm('Reboot the controller?'))return;

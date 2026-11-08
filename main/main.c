@@ -52,7 +52,7 @@ void app_main(void) {
     if(e!=ESP_OK) { ESP_LOGE(TAG,"Invalid stored network settings; network disabled"); return; }
     e=network_start(&settings);
     if(e!=ESP_OK) { ESP_LOGW(TAG,"Network unavailable: %s",esp_err_to_name(e)); return; }
-    ESP_ERROR_CHECK(rf_time_service_start(settings.ntp_server));
+    ESP_ERROR_CHECK(rf_time_service_start(settings.ntp_servers[0],settings.ntp_servers[1]));
     /* Enrollment only until claimed, then mTLS; see web.c. */
     e=web_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable: %s",esp_err_to_name(e));

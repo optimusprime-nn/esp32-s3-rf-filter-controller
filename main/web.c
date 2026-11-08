@@ -225,7 +225,8 @@ static cJSON *config_json(const rf_management_settings_t *s) {
     cJSON *o=cJSON_CreateObject();
     cJSON_AddStringToObject(o,"hostname",s->hostname);
     cJSON_AddStringToObject(o,"fqdn",s->fqdn);
-    cJSON_AddStringToObject(o,"ntp_server",s->ntp_server);
+    cJSON *ntp=cJSON_AddArrayToObject(o,"ntp_servers");
+    for(int i=0;i<RF_NTP_COUNT;i++) cJSON_AddItemToArray(ntp,cJSON_CreateString(s->ntp_servers[i]));
     cJSON *net=cJSON_AddObjectToObject(o,"network");
     cJSON_AddBoolToObject(net,"dhcp",s->dhcp);
     cJSON_AddStringToObject(net,"address",s->ipv4);
@@ -321,7 +322,8 @@ static esp_err_t status_handler(httpd_req_t *req) {
     cJSON *t=cJSON_AddObjectToObject(o,"time");
     cJSON_AddBoolToObject(t,"synchronized",rf_time_service_is_synchronized());
     cJSON_AddNumberToObject(t,"unix_time",(double)time(NULL));
-    cJSON_AddStringToObject(t,"ntp_server",s.ntp_server);
+    cJSON *ntp=cJSON_AddArrayToObject(t,"ntp_servers");
+    for(int i=0;i<RF_NTP_COUNT;i++) cJSON_AddItemToArray(ntp,cJSON_CreateString(s.ntp_servers[i]));
     cJSON *rf=cJSON_AddObjectToObject(o,"rf");
     cJSON_AddNumberToObject(rf,"filter",rf_filter_current());
     cJSON_AddItemToObject(o,"fan",fan_json());
@@ -459,8 +461,16 @@ static esp_err_t settings_put(httpd_req_t *req, settings_edit_t edit) {
 static bool edit_hostname(rf_management_settings_t *s, const cJSON *b) {
     return copy_field(s->hostname,sizeof(s->hostname),b,"hostname");
 }
+/* {"servers":["primary","secondary"]}: exactly two names. */
 static bool edit_ntp(rf_management_settings_t *s, const cJSON *b) {
-    return copy_field(s->ntp_server,sizeof(s->ntp_server),b,"server");
+    const cJSON *list=cJSON_GetObjectItemCaseSensitive(b,"servers");
+    if(!cJSON_IsArray(list) || cJSON_GetArraySize(list)!=RF_NTP_COUNT) return false;
+    for(int i=0;i<RF_NTP_COUNT;i++) {
+        const cJSON *v=cJSON_GetArrayItem(list,i);
+        if(!cJSON_IsString(v) || strlen(v->valuestring)>RF_NTP_MAX) return false;
+        strcpy(s->ntp_servers[i],v->valuestring);
+    }
+    return true;
 }
 static bool edit_network(rf_management_settings_t *s, const cJSON *b) {
     const cJSON *dhcp=cJSON_GetObjectItemCaseSensitive(b,"dhcp");

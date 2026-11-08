@@ -79,7 +79,7 @@ To use the dashboard in a browser, import your client certificate (for example `
 |---|---|
 | `device` | `hostname`, `fqdn`, `ipv4` (`null` without an address), `mac`, `firmware`, `idf` |
 | `system` | `uptime_ms`, `reset_reason`, `heap_internal_free`, `heap_internal_min_free`, `heap_psram_free` |
-| `time` | `synchronized`, `unix_time`, `ntp_server` |
+| `time` | `synchronized`, `unix_time`, `ntp_servers` (the two servers, in order) |
 | `rf` | `filter` (1 to 4) |
 | `fan` | `percent`, `rpm` (`null` without a tachometer), `pwm_gpio`, `tach_gpio` (`-1` for none) |
 | `weather` | As `GET /api/v1/sensors/weather` |
@@ -136,9 +136,9 @@ The history is `{"interval_s":60,"capacity_hours":48,"fields":[...],"points":[[.
 
 | Method | Path | Purpose | Body |
 |---|---|---|---|
-| GET | `/api/v1/config` | `hostname`, `fqdn`, `ntp_server`, `network` (`dhcp`, `address`, `netmask`, `gateway`, `dns`), `acme` (`enabled`, `cloudflare_zone`) and `provisioning` (as in status). Never returns secrets | |
+| GET | `/api/v1/config` | `hostname`, `fqdn`, `ntp_servers`, `network` (`dhcp`, `address`, `netmask`, `gateway`, `dns`), `acme` (`enabled`, `cloudflare_zone`) and `provisioning` (as in status). Never returns secrets | |
 | PUT | `/api/v1/config/hostname` | Set the hostname. Applies at the next reboot | `{"hostname":"rf"}` |
-| PUT | `/api/v1/config/ntp` | Set the NTP server. Applies at the next reboot | `{"server":"pool.ntp.org"}` |
+| PUT | `/api/v1/config/ntp` | Set both NTP servers; both are required. The controller polls them and uses the first that answers. Applies at the next reboot. Defaults: `time.cloudflare.com` and `time.google.com`, as on the time server | `{"servers":["time.cloudflare.com","time.google.com"]}` |
 | PUT | `/api/v1/config/network` | DHCP or static IPv4. Applies at the next reboot. With `"dhcp":true` the other fields are ignored | `{"dhcp":false,"address":"192.0.2.10","netmask":"255.255.255.0","gateway":"192.0.2.1","dns":"192.0.2.1"}` |
 | PUT | `/api/v1/config/wifi` | Store Wi-Fi credentials. `200` `{"stored":true,"reboot_required":true}` | `{"ssid":"...","password":"..."}` |
 | PUT | `/api/v1/config/tls` | Use this HTTPS certificate and key, in PEM, instead of the bootstrap certificate. `200` `{"stored":true,"reboot_required":true}` | `{"certificate":"-----BEGIN...","private_key":"-----BEGIN..."}` |
