@@ -17,6 +17,9 @@ jobs:
       - name: Run host tests
         run: |
           docker run --rm             -v "$GITHUB_WORKSPACE:/project"             -w /project             gcc:14             sh tests/host/run.sh
+      - name: Check dashboard scripts
+        run: |
+          docker run --rm             -v "$GITHUB_WORKSPACE:/project"             -w /project             node:22-alpine             node tests/web/check-scripts.js
       - name: Build firmware (ESP-IDF v6.1)
         run: |
           docker run --rm \

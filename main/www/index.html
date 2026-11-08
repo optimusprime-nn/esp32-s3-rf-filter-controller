@@ -224,7 +224,7 @@ $('netForm').onsubmit=async e=>{e.preventDefault();
     await api('PUT','/api/v1/config/network',n);msg('Saved. Reboot to apply.')}catch(err){msg(err.message,true)}};
 $('sdrReboot').onclick=()=>{if(!confirm('Ask the SDR board to reboot?'))return;
   api('POST','/api/v1/sdr/reboot',undefined,{'X-Confirm-SDR-Reboot':'REBOOT'}).then(()=>{msg('SDR reboot requested');refresh()}).catch(e=>msg(e.message,true))};
-$('sdrPower').onclick=()=>{if(!confirm('Cut the SDR board's power for a few seconds? Unsaved work on it is lost.'))return;
+$('sdrPower').onclick=()=>{if(!confirm("Cut the SDR board's power for a few seconds? Unsaved work on it is lost."))return;
   api('POST','/api/v1/sdr/power-cycle',undefined,{'X-Confirm-SDR-Power-Cycle':'POWER-CYCLE'}).then(()=>{msg('SDR power cut; it comes back by itself');refresh()}).catch(e=>msg(e.message,true))};
 $('otaUpload').onclick=async()=>{const f=$('otaFile').files[0];if(!f){msg('Choose a .bin file first',true);return}
   if(!confirm('Upload '+f.name+' ('+f.size+' bytes)? It becomes the next boot.'))return;
