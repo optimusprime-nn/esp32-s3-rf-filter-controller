@@ -173,3 +173,17 @@ menu "RF controller SDR board resets"
             New reset requests are refused for this long after one ends.
 
 endmenu
+
+menu "RF controller firmware updates"
+
+    config RF_OTA_SOAK_SECONDS
+        int "Seconds before a new image confirms itself"
+        range 30 3600
+        default 300
+        help
+            A new image boots pending verification. If HTTPS management is up
+            after this long, the image is marked valid; otherwise it is rolled
+            back. A crash or reset before then also rolls it back. Matches the
+            time server's 300 s.
+
+endmenu

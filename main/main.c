@@ -12,10 +12,12 @@
 #include "temp_sensor.h"
 #include "weather.h"
 #include "sdr_power.h"
+#include "ota.h"
 extern esp_err_t config_store_init(void);
 extern esp_err_t config_store_load_port(uint8_t *port);
 extern esp_err_t network_start(const rf_management_settings_t *settings);
 extern esp_err_t web_start(void);
+extern bool web_started(void);
 extern esp_err_t rf_usb_console_start(void);
 static const char *TAG="rf_filter";
 void app_main(void) {
@@ -33,6 +35,12 @@ void app_main(void) {
     /* A panic here would reboot-loop and release the RF mute output on every reset. */
     e=config_store_init();
     if(e!=ESP_OK) { ESP_LOGE(TAG,"NVS unavailable, staying offline: %s",esp_err_to_name(e)); return; }
+    e=rf_ota_init();
+    if(e!=ESP_OK) ESP_LOGE(TAG,"OTA state unavailable: %s",esp_err_to_name(e));
+    /* Started before anything below can return early, so a new image that never brings
+       HTTPS up is still rolled back. */
+    e=rf_ota_start_soak(web_started);
+    if(e!=ESP_OK) ESP_LOGE(TAG,"OTA verification unavailable: %s",esp_err_to_name(e));
     /* Prints the enrollment code on an unclaimed board, for the setup tool to read. */
     e=rf_ownership_init();
     if(e!=ESP_OK) ESP_LOGE(TAG,"Management ownership state unreadable: %s",esp_err_to_name(e));

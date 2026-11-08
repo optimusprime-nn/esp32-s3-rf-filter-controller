@@ -144,5 +144,23 @@ Do this before the Radxa is wired, with a meter on GPIO4 and GPIO5. See [HARDWAR
 | Another `sdr-power-cycle` within 10 s | `ERROR: an SDR reset is in progress or just finished` |
 | Press reset on the controller | GPIO5 stays low, so the Radxa's power isn't cut |
 
+## 9. Test a firmware update
+The first time, flash over USB as in step 1, because rollback needs the new bootloader; OTA can't replace the bootloader. Then make a small change, such as the version, build, and upload it from the dashboard's Firmware section, or:
+
+```sh
+curl -sk $C -X POST -H 'Content-Type: application/octet-stream' --data-binary @build/rf_filter_controller.bin https://<device-ip>/api/v1/ota/image
+```
+
+| Check | Expected |
+|---|---|
+| Upload | `202`; `/api/v1/ota/status` shows `boot_partition` `ota_1` and `last_result` `staged_reboot_required` |
+| Upload a file that isn't this firmware, such as a time server image | `400 Not a firmware image for this controller`, nothing written |
+| Reboot | Runs the new version on `ota_1` with `pending_verify` `true`; the log says it confirms in 300 s |
+| Wait 5 minutes | `pending_verify` `false`, `last_result` `running_image_confirmed` |
+| Roll back from the dashboard | Reboots into the previous version on `ota_0` |
+| Upload again, reboot, and press reset within 5 minutes | The bootloader returns to the previous image; `rollbacks_detected` goes up by one |
+
+In PowerShell, Windows' `curl.exe` needs the `.p12` client certificate, as in step 6.
+
 ## Report back
 Send me anything that failed, with the serial log. Also note how long the first boot takes to print the bootstrap fingerprint, since it generates a key, and the fan's RPM at 100% next to its rated speed, and the weather station's RSSI and distance. If prompts and log lines get mixed up on the USB console, tell me that too.
