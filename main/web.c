@@ -222,7 +222,8 @@ static cJSON *temperature_json(void) {
         cJSON *s=cJSON_CreateObject();
         cJSON_AddStringToObject(s,"id",r[i].id);
         cJSON_AddStringToObject(s,"source",rf_temp_source_name(r[i].source));
-        if(r[i].source==RF_TEMP_INTERNAL) cJSON_AddNullToObject(s,"address"); else cJSON_AddNumberToObject(s,"address",r[i].address);
+        if(r[i].source==RF_TEMP_INTERNAL) { cJSON_AddNullToObject(s,"bus"); cJSON_AddNullToObject(s,"address"); }
+        else { cJSON_AddNumberToObject(s,"bus",r[i].bus); cJSON_AddNumberToObject(s,"address",r[i].address); }
         cJSON_AddBoolToObject(s,"ok",r[i].ok);
         if(r[i].ok) cJSON_AddNumberToObject(s,"celsius",r[i].millicelsius/1000.0); else cJSON_AddNullToObject(s,"celsius");
         if(r[i].ok && r[i].has_humidity) cJSON_AddNumberToObject(s,"humidity_percent",r[i].millipercent_rh/1000.0);

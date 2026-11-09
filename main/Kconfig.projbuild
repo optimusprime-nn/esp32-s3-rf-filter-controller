@@ -69,6 +69,27 @@ menu "RF controller temperature sensors"
             its temperature and relative humidity every 2 seconds. Turn this off
             if another kind of chip uses 0x38 on this bus.
 
+    config RF_I2C2_ENABLE
+        bool "Second I2C bus for another AHT20 or AHT30"
+        default y
+        help
+            AHT20 and AHT30 sensors all sit at 0x38, so a second one needs its own
+            bus. At boot the firmware looks for an AHT20/AHT30 at 0x38 on these
+            pins and, if one answers, reads it as aht2-0x38. Nothing else is
+            read on this bus.
+
+    config RF_I2C2_SDA_GPIO
+        int "Second I2C bus SDA GPIO"
+        depends on RF_I2C2_ENABLE
+        range 0 48
+        default 17
+
+    config RF_I2C2_SCL_GPIO
+        int "Second I2C bus SCL GPIO"
+        depends on RF_I2C2_ENABLE
+        range 0 48
+        default 18
+
 endmenu
 
 menu "RF controller weather station receiver"

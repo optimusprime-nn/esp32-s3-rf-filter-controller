@@ -111,14 +111,30 @@ static void add_internal(void) {
     readings[count]=(rf_temp_reading_t){.id="internal",.source=RF_TEMP_INTERNAL};
     count++;
 }
-static bool add_device(i2c_master_bus_handle_t bus, uint8_t addr, rf_temp_source_t source) {
+static bool add_device(i2c_master_bus_handle_t bus, uint8_t bus_no, uint8_t addr, rf_temp_source_t source) {
     i2c_device_config_t dev={.dev_addr_length=I2C_ADDR_BIT_LEN_7,.device_address=addr,.scl_speed_hz=100000};
     if(i2c_master_bus_add_device(bus,&dev,&devices[count])!=ESP_OK) return false;
     rf_temp_reading_t *r=&readings[count];
-    *r=(rf_temp_reading_t){.source=source,.address=addr,.has_humidity=source==RF_TEMP_AHT};
-    snprintf(r->id,sizeof(r->id),"%s-0x%02x",source==RF_TEMP_AHT?"aht":"i2c",addr);
+    *r=(rf_temp_reading_t){.source=source,.bus=bus_no,.address=addr,.has_humidity=source==RF_TEMP_AHT};
+    /* Bus 1 keeps the plain ids; bus 2 adds a 2 so both AHTs at 0x38 stay distinct. */
+    snprintf(r->id,sizeof(r->id),"%s%s-0x%02x",source==RF_TEMP_AHT?"aht":"i2c",bus_no==2?"2":"",addr);
     count++;
     return true;
+}
+static i2c_master_bus_handle_t new_bus(int sda, int scl, uint8_t bus_no) {
+    i2c_master_bus_config_t bus_cfg={.i2c_port=-1,.sda_io_num=sda,.scl_io_num=scl,
+        .clk_source=I2C_CLK_SRC_DEFAULT,.glitch_ignore_cnt=7,.flags.enable_internal_pullup=true};
+    i2c_master_bus_handle_t bus;
+    esp_err_t e=i2c_new_master_bus(&bus_cfg,&bus);
+    if(e!=ESP_OK) { ESP_LOGE(TAG,"I2C bus %u unavailable: %s",(unsigned)bus_no,esp_err_to_name(e)); return NULL; }
+    return bus;
+}
+static bool add_aht(i2c_master_bus_handle_t bus, uint8_t bus_no) {
+    if(i2c_master_probe(bus,AHT_ADDRESS,I2C_TIMEOUT_MS)!=ESP_OK || !add_device(bus,bus_no,AHT_ADDRESS,RF_TEMP_AHT)) return false;
+    if(aht_init(devices[count-1])) { ESP_LOGI(TAG,"AHT20/AHT30 at 0x%02x on I2C bus %u",AHT_ADDRESS,(unsigned)bus_no); return true; }
+    ESP_LOGW(TAG,"Chip at 0x%02x on I2C bus %u doesn't behave like an AHT20/AHT30",AHT_ADDRESS,(unsigned)bus_no);
+    i2c_master_bus_rm_device(devices[--count]);
+    return false;
 }
 static void add_i2c(void) {
     uint8_t addrs[RF_TEMP_MAX_LM75];
@@ -128,25 +144,21 @@ static void add_i2c(void) {
 #if CONFIG_RF_TEMP_AHT_ENABLE
     aht=true;
 #endif
+#if CONFIG_RF_I2C2_ENABLE
+    /* The second bus holds only an AHT20/AHT30, which can't share 0x38 with another. */
+    i2c_master_bus_handle_t bus2=new_bus(CONFIG_RF_I2C2_SDA_GPIO,CONFIG_RF_I2C2_SCL_GPIO,2);
+    bool aht2_found=bus2 && add_aht(bus2,2);
+    if(!aht2_found) ESP_LOGI(TAG,"No AHT20/AHT30 on I2C bus 2");
+#endif
     if(!n && !aht) return;
-    i2c_master_bus_config_t bus_cfg={.i2c_port=-1,.sda_io_num=CONFIG_RF_I2C_SDA_GPIO,.scl_io_num=CONFIG_RF_I2C_SCL_GPIO,
-        .clk_source=I2C_CLK_SRC_DEFAULT,.glitch_ignore_cnt=7,.flags.enable_internal_pullup=true};
-    i2c_master_bus_handle_t bus;
-    esp_err_t e=i2c_new_master_bus(&bus_cfg,&bus);
-    if(e!=ESP_OK) { ESP_LOGE(TAG,"I2C bus unavailable: %s",esp_err_to_name(e)); return; }
-    bool aht_found=false;
-    if(aht && i2c_master_probe(bus,AHT_ADDRESS,I2C_TIMEOUT_MS)==ESP_OK && add_device(bus,AHT_ADDRESS,RF_TEMP_AHT)) {
-        if(aht_init(devices[count-1])) { aht_found=true; ESP_LOGI(TAG,"AHT20/AHT30 at 0x%02x",AHT_ADDRESS); }
-        else {
-            ESP_LOGW(TAG,"Chip at 0x%02x doesn't behave like an AHT20/AHT30",AHT_ADDRESS);
-            i2c_master_bus_rm_device(devices[--count]);
-        }
-    }
+    i2c_master_bus_handle_t bus=new_bus(CONFIG_RF_I2C_SDA_GPIO,CONFIG_RF_I2C_SCL_GPIO,1);
+    if(!bus) return;
+    bool aht_found=aht && add_aht(bus,1);
     for(size_t i=0;i<n;i++) {
         if(aht_found && addrs[i]==AHT_ADDRESS) { ESP_LOGW(TAG,"0x%02x is the AHT20/AHT30, not an LM75",addrs[i]); continue; }
         /* Only sensors present at boot are listed; one that fails later reports ok=false. */
         if(i2c_master_probe(bus,addrs[i],I2C_TIMEOUT_MS)!=ESP_OK) { ESP_LOGW(TAG,"No sensor at 0x%02x",addrs[i]); continue; }
-        if(add_device(bus,addrs[i],RF_TEMP_LM75)) ESP_LOGI(TAG,"Temperature sensor at 0x%02x",addrs[i]);
+        if(add_device(bus,1,addrs[i],RF_TEMP_LM75)) ESP_LOGI(TAG,"Temperature sensor at 0x%02x",addrs[i]);
     }
 }
 esp_err_t rf_temp_start(void) {

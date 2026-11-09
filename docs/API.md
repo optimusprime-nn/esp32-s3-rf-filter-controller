@@ -86,7 +86,7 @@ To use the dashboard in a browser, import your client certificate (for example `
 | `rf` | `filter` (1 to 4) |
 | `fan` | `percent`, `rpm` (`null` without a tachometer), `pwm_gpio`, `tach_gpio` (`-1` for none) |
 | `weather` | As `GET /api/v1/sensors/weather` |
-| `temperature` | `sensors`: a list of `{"id","source","address","ok","celsius","humidity_percent"}`. `address` is `null` and `source` is `internal` for the ESP32-S3's own sensor; I2C sensors have their 7-bit address and `source` `lm75`, or `aht` for an AHT20/AHT30 (id `aht-0x38`). `celsius` is `null` while `ok` is `false`. `humidity_percent` is relative humidity from an AHT20/AHT30, and `null` for other sensors or while `ok` is `false` |
+| `temperature` | `sensors`: a list of `{"id","source","bus","address","ok","celsius","humidity_percent"}`. `bus` and `address` are `null` and `source` is `internal` for the ESP32-S3's own sensor. I2C sensors have their `bus` (1 or 2), their 7-bit address and `source` `lm75`, or `aht` for an AHT20/AHT30 (id `aht-0x38` on bus 1, `aht2-0x38` on bus 2). `celsius` is `null` while `ok` is `false`. `humidity_percent` is relative humidity from an AHT20/AHT30, and `null` for other sensors or while `ok` is `false` |
 | `provisioning` | `wifi` and `tls` (each `true` once stored), `management_claimed` |
 | `console` | `mode` (`mtls`), `server_certificate` (`bootstrap` or `provisioned`) |
 

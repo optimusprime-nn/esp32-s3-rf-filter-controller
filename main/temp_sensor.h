@@ -3,15 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
-/* The internal sensor, one AHT20/AHT30 and up to eight LM75-family sensors. */
+/* The internal sensor, an AHT20/AHT30 on each of the two I2C buses and up to eight
+   LM75-family sensors on the first. */
 #define RF_TEMP_MAX_LM75 8
-#define RF_TEMP_MAX_SENSORS (2+RF_TEMP_MAX_LM75)
+#define RF_TEMP_MAX_SENSORS (3+RF_TEMP_MAX_LM75)
 typedef enum { RF_TEMP_INTERNAL, RF_TEMP_LM75, RF_TEMP_AHT } rf_temp_source_t;
 typedef struct {
     char id[16];
     rf_temp_source_t source;
     bool ok;
     bool has_humidity;          /* the sensor measures relative humidity (AHT20/AHT30) */
+    uint8_t bus;                /* 1 or 2; 0 for the internal sensor */
     uint8_t address;
     int32_t millicelsius;
     int32_t millipercent_rh;    /* valid when has_humidity and ok */
