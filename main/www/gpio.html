@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPIO</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1b1f24;--muted:#5b6470;--line:#d8dde3;--accent:#1f6feb;--bad:#c62828;--ok:#2e7d32}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1f24;--text:#e8eaed;--muted:#9aa3ad;--line:#2f353c;--accent:#58a6ff;--bad:#ff6b6b;--ok:#6ccf76}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 12px}
+h2{font-size:15px;margin:0 0 10px;color:var(--muted);font-weight:600}
+.tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:1px solid var(--line)}
+.tabs a{padding:6px 12px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a[aria-current]{color:var(--text);border-color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:left;font-size:13px;color:var(--muted);font-weight:600;padding:4px 8px 6px 0;border-bottom:1px solid var(--line)}
+td{padding:5px 8px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}
+td.g{font-weight:600;white-space:nowrap}
+.muted{color:var(--muted)}.bad{color:var(--bad)}
+.lv{display:inline-block;min-width:2.2em;text-align:center;border-radius:10px;font-size:12px;padding:1px 6px;border:1px solid var(--line)}
+.lv.h{background:var(--ok);border-color:var(--ok);color:#fff}
+.chip{display:inline-block;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:0 6px;margin:0 3px 2px 0;white-space:nowrap}
+#msg{min-height:1.4em}
+</style>
+</head>
+<body>
+<main>
+<nav class="tabs"><a href="/">Dashboard</a><a href="/weather">Weather</a><a href="/gpio" aria-current="page">GPIO</a></nav>
+<h1>GPIO</h1>
+<p id="msg" class="muted" role="status"></p>
+<div class="card">
+<h2>Pins in use</h2>
+<table><thead><tr><th>GPIO</th><th>Function</th><th>State</th><th>Level</th><th>Setup</th></tr></thead><tbody id="used"></tbody></table>
+</div>
+<div class="card">
+<h2>Other pins</h2>
+<table><thead><tr><th>GPIO</th><th>Note</th><th>Level</th><th>Setup</th></tr></thead><tbody id="free"></tbody></table>
+</div>
+<p class="muted">Levels are read from the pin, or from the output register for outputs that aren't also inputs. Pins driven by a peripheral (PWM, I2C, SPI, USB) show no level unless their input is enabled. Refreshes every 2 seconds.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+function cell(tr,text,cls){const td=document.createElement('td');if(cls)td.className=cls;if(text instanceof Node)td.appendChild(text);else td.textContent=text;tr.appendChild(td);return td}
+function level(p){const s=document.createElement('span');s.className='lv'+(p.level===1?' h':'');s.textContent=p.level===null?'–':p.level;if(p.level===null)s.title='Not readable without changing the pin';return s}
+function setup(p){const f=document.createDocumentFragment();if(!p.config_read){f.append('Not read');return f}
+  const c=[];if(p.peripheral)c.push('peripheral');if(p.output)c.push(p.open_drain?'open-drain out':'output');if(p.input)c.push('input');if(!p.output&&!p.input)c.push('disabled');
+  if(p.pull_up)c.push('pull-up');if(p.pull_down)c.push('pull-down');if(p.output)c.push('drive '+p.drive);
+  for(const t of c){const s=document.createElement('span');s.className='chip';s.textContent=t;f.appendChild(s)}return f}
+function render(d){
+  const u=$('used'),f=$('free');u.textContent='';f.textContent='';
+  for(const p of d.pins){const tr=document.createElement('tr');
+    if(p.function){cell(tr,p.gpio,'g');const fn=cell(tr,p.function);if(p.note){const n=document.createElement('div');n.className='muted';n.textContent=p.note;fn.appendChild(n)}
+      cell(tr,p.detail||'');cell(tr,level(p));cell(tr,setup(p));u.appendChild(tr)}
+    else{cell(tr,p.gpio,'g');cell(tr,p.note||'Free',p.note?'':'muted');cell(tr,p.config_read?level(p):'');cell(tr,setup(p));f.appendChild(tr)}}
+}
+let busy=false;
+async function refresh(){if(busy)return;busy=true;try{const r=await fetch('/api/v1/gpio',{cache:'no-store'});if(!r.ok)throw new Error('GPIO request failed: HTTP '+r.status);render(await r.json());$('msg').textContent='';$('msg').className='muted'}catch(e){$('msg').textContent=e.message;$('msg').className='bad'}finally{busy=false}}
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>

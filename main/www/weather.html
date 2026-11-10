@@ -30,15 +30,18 @@ svg.chart text{fill:var(--muted);font-size:11px}
 #compass{width:64px;height:64px;float:right}
 #compass circle{fill:none;stroke:var(--line);stroke-width:2}#compass path{fill:var(--accent)}#compass text{fill:var(--muted);font-size:8px}
 #msg{min-height:1.4em}
+.tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:1px solid var(--line)}
+.tabs a{padding:6px 12px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a[aria-current]{color:var(--text);border-color:var(--accent)}
 </style>
 </head>
 <body>
 <main>
+<nav class="tabs"><a href="/">Dashboard</a><a href="/weather" aria-current="page">Weather</a><a href="/gpio">GPIO</a></nav>
 <div class="top">
 <h1>Weather station</h1>
 <div class="row">
 <select id="units" aria-label="Units"><option value="metric">°C, km/h, mm</option><option value="imperial">°F, mph, in</option></select>
-<a href="/">Controller dashboard</a>
 </div>
 </div>
 <p id="msg" class="muted" role="status"></p>
