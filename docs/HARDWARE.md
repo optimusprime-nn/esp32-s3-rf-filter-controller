@@ -24,6 +24,7 @@ Two HMC7992 SP4T modules: common RFC of switch A is RF input; common RFC of swit
 | 8 | RF mute | Active high, held on by the firmware |
 | 9 | Fan tachometer | |
 | 10, 11 | I2C SDA, SCL | Temperature sensors |
+| 17, 18 | Second I2C SDA, SCL | A second AHT20/AHT30 |
 | 12 to 16 | CC1101 SCK, MOSI, MISO, CS, GDO0 | Weather receiver |
 | 19, 20 | Native USB | Provisioning console |
 
@@ -62,6 +63,10 @@ GPIO1, GPIO9 and the PWM frequency can be changed in `menuconfig` under "RF cont
 
 ## Temperature sensors
 LM75-family sensors (LM75, TMP75, TMP102, PCT2075) on I2C: SDA on GPIO10 and SCL on GPIO11, both with 4.7 kΩ pull-ups to 3.3 V. The internal pull-ups are enabled but are too weak to rely on. Each sensor needs its own address in 0x48 to 0x4F, and every address must be listed in `menuconfig` under "RF controller temperature sensors" (default `0x48`). Only list addresses that hold one of these sensors. The firmware also reads the ESP32-S3's own temperature sensor.
+
+One AHT20 or AHT30 temperature and humidity sensor can share the bus at its fixed address, 0x38. The firmware looks for it at boot and reads temperature and relative humidity from it. Power it from 3.3 V; common breakout boards already carry pull-ups, which is fine alongside the 4.7 kΩ ones. If another kind of chip uses 0x38, turn off "Look for an AHT20 or AHT30 at 0x38" in the same `menuconfig` menu.
+
+Every AHT20 and AHT30 uses 0x38, so two of them can't share a bus: both answer at once and every reading fails its CRC. Put the second one on the second I2C bus, SDA on GPIO17 and SCL on GPIO18, with the same 3.3 V power and pull-ups. It is read as `aht2-0x38`. Nothing else is read on that bus. The pins can be changed, or the bus turned off, under "Second I2C bus for another AHT20 or AHT30" in the same menu.
 
 ## Weather station receiver
 A CC1101 module receives the outdoor sensor of a VEVOR 7-in-1 weather station (YT60233 or YT60234 in the US on 915 MHz, YT60231 in Europe on 868 MHz). Buy a module built for that band: most cheap CC1101 boards are matched for 433 MHz and lose much of their sensitivity at 915 MHz.

@@ -221,10 +221,13 @@ static cJSON *temperature_json(void) {
     for(size_t i=0;i<n;i++) {
         cJSON *s=cJSON_CreateObject();
         cJSON_AddStringToObject(s,"id",r[i].id);
-        cJSON_AddStringToObject(s,"source",r[i].internal?"internal":"lm75");
-        if(r[i].internal) cJSON_AddNullToObject(s,"address"); else cJSON_AddNumberToObject(s,"address",r[i].address);
+        cJSON_AddStringToObject(s,"source",rf_temp_source_name(r[i].source));
+        if(r[i].source==RF_TEMP_INTERNAL) { cJSON_AddNullToObject(s,"bus"); cJSON_AddNullToObject(s,"address"); }
+        else { cJSON_AddNumberToObject(s,"bus",r[i].bus); cJSON_AddNumberToObject(s,"address",r[i].address); }
         cJSON_AddBoolToObject(s,"ok",r[i].ok);
         if(r[i].ok) cJSON_AddNumberToObject(s,"celsius",r[i].millicelsius/1000.0); else cJSON_AddNullToObject(s,"celsius");
+        if(r[i].ok && r[i].has_humidity) cJSON_AddNumberToObject(s,"humidity_percent",r[i].millipercent_rh/1000.0);
+        else cJSON_AddNullToObject(s,"humidity_percent");
         cJSON_AddItemToArray(list,s);
     }
     return o;
@@ -767,6 +770,8 @@ static esp_err_t metrics_get(httpd_req_t *req) {
     for(size_t i=0;i<count;i++) if(r[i].ok) EMIT("rf_temperature_celsius{sensor=\"%s\"} %.3f\n",r[i].id,r[i].millicelsius/1000.0);
     EMIT("# TYPE rf_temperature_sensor_ok gauge\n");
     for(size_t i=0;i<count;i++) EMIT("rf_temperature_sensor_ok{sensor=\"%s\"} %d\n",r[i].id,r[i].ok?1:0);
+    EMIT("# TYPE rf_humidity_percent gauge\n");
+    for(size_t i=0;i<count;i++) if(r[i].ok && r[i].has_humidity) EMIT("rf_humidity_percent{sensor=\"%s\"} %.2f\n",r[i].id,r[i].millipercent_rh/1000.0);
     rf_weather_status_t w;
     rf_weather_status(&w);
     if(w.receiver==RF_WEATHER_RUNNING) {

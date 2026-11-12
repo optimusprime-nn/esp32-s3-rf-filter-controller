@@ -124,10 +124,12 @@ static void set_fan(const char *arg) {
 static void show_temps(void) {
     rf_temp_reading_t r[RF_TEMP_MAX_SENSORS];
     size_t n=rf_temp_snapshot(r,RF_TEMP_MAX_SENSORS);
-    char line[64];
+    char line[80];
     if(!n) put("Temperature: no sensors\r\n");
     for(size_t i=0;i<n;i++) {
-        if(r[i].ok) snprintf(line,sizeof(line),"Temperature %s: %s%ld.%01ld C\r\n",r[i].id,r[i].millicelsius<0?"-":"",labs(r[i].millicelsius)/1000,labs(r[i].millicelsius)%1000/100);
+        if(r[i].ok && r[i].has_humidity) snprintf(line,sizeof(line),"Temperature %s: %s%ld.%01ld C, %ld.%01ld%% humidity\r\n",r[i].id,r[i].millicelsius<0?"-":"",
+            labs(r[i].millicelsius)/1000,labs(r[i].millicelsius)%1000/100,(long)r[i].millipercent_rh/1000,(long)r[i].millipercent_rh%1000/100);
+        else if(r[i].ok) snprintf(line,sizeof(line),"Temperature %s: %s%ld.%01ld C\r\n",r[i].id,r[i].millicelsius<0?"-":"",labs(r[i].millicelsius)/1000,labs(r[i].millicelsius)%1000/100);
         else snprintf(line,sizeof(line),"Temperature %s: not responding\r\n",r[i].id);
         put(line);
     }
