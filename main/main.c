@@ -10,6 +10,7 @@
 #include "ownership.h"
 #include "fan.h"
 #include "temp_sensor.h"
+#include "weather_feed.h"
 #include "weather.h"
 #include "sdr_power.h"
 #include "ota.h"
@@ -58,6 +59,8 @@ void app_main(void) {
     if(e!=ESP_OK) ESP_LOGW(TAG,"Temperature sensors unavailable: %s",esp_err_to_name(e));
     e=rf_weather_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"Weather receiver unavailable: %s",esp_err_to_name(e));
+    e=rf_weather_feed_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"Weather feed unavailable: %s",esp_err_to_name(e));
     /* Before anything below can return early: an unprovisioned device must still be reachable over USB. */
     e=rf_usb_console_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"USB provisioning console unavailable: %s",esp_err_to_name(e));

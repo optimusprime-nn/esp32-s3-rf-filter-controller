@@ -24,6 +24,7 @@
 #include "ownership.h"
 #include "provisioning.h"
 #include "temp_sensor.h"
+#include "weather_feed.h"
 #include "time_service.h"
 #include "weather.h"
 #include "sdr_power.h"
@@ -182,6 +183,9 @@ static cJSON *weather_json(void) {
     if(w.receiver==RF_WEATHER_DISABLED) cJSON_AddNullToObject(o,"frequency_mhz");
     else cJSON_AddNumberToObject(o,"frequency_mhz",w.frequency_khz/1000.0);
     cJSON_AddBoolToObject(o,"invert",w.invert);
+    cJSON *fd=cJSON_AddObjectToObject(o,"feed");
+    if(rf_weather_feed_port()) cJSON_AddNumberToObject(fd,"port",rf_weather_feed_port()); else cJSON_AddNullToObject(fd,"port");
+    cJSON_AddNumberToObject(fd,"clients",(double)rf_weather_feed_clients());
     cJSON *rs=cJSON_AddObjectToObject(o,"rssi");
     if(w.have_rssi) { cJSON_AddNumberToObject(rs,"floor_dbm",w.rssi_floor_dbm); cJSON_AddNumberToObject(rs,"peak_dbm",w.rssi_peak_dbm); }
     else { cJSON_AddNullToObject(rs,"floor_dbm"); cJSON_AddNullToObject(rs,"peak_dbm"); }

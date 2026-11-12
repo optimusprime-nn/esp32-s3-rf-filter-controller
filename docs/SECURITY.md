@@ -9,6 +9,9 @@ Management follows esp32p4_nts_time_server. Until it is claimed, the controller 
 - Anyone holding the management CA's private key can manage the controller. Keep it offline.
 - A claim can only be undone by erasing the flash.
 
+## Weather feed
+The one exception to mTLS is the read-only weather feed on TCP 30090, for displays on the LAN. It sends the accepted station's readings and nothing else, and ignores anything a client sends, so it can't change the board. Anyone on the LAN can read the weather from it. Turn it off in `menuconfig` if that matters, and don't forward the port to the internet.
+
 ## SDR board resets
 Over the network, rebooting or power-cycling the SDR board needs mTLS like every other call, plus a confirmation header. Each reset has a fixed length and a 10-second cooldown, so even a valid client can't hold the Radxa off or cycle it rapidly.
 
