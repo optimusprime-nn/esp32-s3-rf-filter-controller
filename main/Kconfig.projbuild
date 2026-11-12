@@ -159,6 +159,23 @@ menu "RF controller weather station receiver"
         range 0 48
         default 16
 
+    config RF_WEATHER_FEED_ENABLE
+        bool "TCP feed of readings for other devices"
+        depends on RF_WEATHER_ENABLE
+        default y
+        help
+            Listens on a TCP port and sends every reading from the accepted station
+            as one line of JSON, for displays such as the ESP32-P4 ADS-B display.
+            It holds weather data only, needs no client certificate and accepts no
+            commands. Up to four clients at once. Turn it off if weather readings
+            shouldn't be readable by anything on the LAN.
+
+    config RF_WEATHER_FEED_PORT
+        int "Weather feed TCP port"
+        depends on RF_WEATHER_FEED_ENABLE
+        range 1 65535
+        default 30090
+
 endmenu
 
 menu "RF controller SDR board resets"

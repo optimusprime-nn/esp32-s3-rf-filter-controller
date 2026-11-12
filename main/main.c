@@ -10,6 +10,7 @@
 #include "ownership.h"
 #include "fan.h"
 #include "temp_sensor.h"
+#include "weather_feed.h"
 #include "weather.h"
 #include "sdr_power.h"
 #include "ota.h"
@@ -67,6 +68,9 @@ void app_main(void) {
     e=network_start(&settings);
     if(e!=ESP_OK) { ESP_LOGW(TAG,"Network unavailable: %s",esp_err_to_name(e)); return; }
     ESP_ERROR_CHECK(rf_time_service_start(settings.ntp_servers[0],settings.ntp_servers[1]));
+    /* Needs the network stack: lwIP panics on a socket opened before network_start. */
+    e=rf_weather_feed_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"Weather feed unavailable: %s",esp_err_to_name(e));
     /* Enrollment only until claimed, then mTLS; see web.c. */
     e=web_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable: %s",esp_err_to_name(e));

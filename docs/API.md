@@ -132,6 +132,7 @@ A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARD
 | `packets` | `ok` (new readings), `rejected` (failed checks, including noise that looks like a packet, so this grows slowly on its own) and `ignored` (other stations) |
 | `heard` | Up to four stations heard recently, accepted or not: `station`, `rssi_dbm`, `age_s` |
 | `invert` | Whether the FSK sense is flipped |
+| `feed` | The [weather feed](#weather-feed-tcp): `port` (`null` when it's off) and `clients` connected now |
 | `rssi` | `floor_dbm`, the quietest one-second average, and `peak_dbm`, the strongest sample, both over the last minute and sampled every 10 ms (`null` until the first second). A station burst reaching the radio shows as a peak well above the floor |
 | `recent_rejected` | The last 8 packets that failed decoding, newest first: `age_s`, `reason` (`checksum`, `counter`, `not_weather`, `short` or `overflow`), `rssi_dbm`, `hex` (the 21 bytes as received, before any inversion) and `inverted_ok` (`true` if the packet passes every check with its bits flipped, which means "Invert the FSK data" should be changed). Noise that matches the sync word lands here too, usually at low RSSI |
 | `reading` | `null` until the first packet, otherwise `station`, `channel`, `age_s`, `stale` (no packet for 90 s), `rssi_dbm`, `battery_ok`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg` (where the wind comes from), `rain_mm`, `uv_index`, `light_lux` |
@@ -139,6 +140,23 @@ A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARD
 The history is `{"interval_s":60,"capacity_hours":48,"fields":[...],"points":[[...],...]}`, oldest first. Each point lists the values named in `fields`: `age_s`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg`, `rain_mm`, `uv_index`, `light_lux`, `rssi_dbm`. A sample is recorded only when a reading arrives, so gaps mean the station wasn't heard. The history is kept in PSRAM, or for 6 hours in internal RAM if PSRAM is missing, and is lost at every reboot.
 
 `rain_mm` is the sensor's running total since its batteries were last fitted, so work out rainfall from the difference between two readings. `battery_ok` is decoded as rtl_433 does, but rtl_433 marks the meaning of that bit as unconfirmed. A station's ID can change when its batteries are replaced; set the filter again from the `heard` list.
+
+## Weather feed (TCP)
+
+For other devices on the LAN, such as the ESP32-P4 ADS-B display, the controller sends weather readings over plain TCP on port **30090** (set under "TCP feed of readings for other devices" in `menuconfig`). It needs no client certificate and holds weather data only: clients can't send commands, and anything they send is discarded. Up to four clients can connect at once; a fifth is refused.
+
+Each line is one JSON object ending in `\n`:
+
+- On connecting, the latest reading, or `{"type":"waiting",...}` if there is none yet.
+- One `{"type":"reading",...}` line for every new reading from the accepted station, about every 20 s.
+- The latest line again every 30 s while no new reading arrives, so a client that sees nothing for 60 s can treat the link as dead. Check `stale`, which turns `true` 90 s after the last packet.
+
+```
+{"type":"reading","model":"VEVOR 7-in-1","station":"faf8","channel":0,"age_s":2,"stale":false,"rssi_dbm":-92,"battery_ok":true,"temperature_c":26.3,"humidity_percent":63,"wind_avg_kmh":16.4,"wind_gust_kmh":20.0,"wind_dir_deg":42,"rain_mm":231.1,"uv_index":0,"light_lux":5083}
+{"type":"waiting","receiver":"running","frequency_mhz":915.000}
+```
+
+The fields match the `reading` object of `GET /api/v1/sensors/weather`. A client that can't take a line at once is disconnected rather than allowed to stall the feed, so read continuously. To see it from a PC: `nc 192.168.2.51 30090`.
 
 ## GPIO
 
