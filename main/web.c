@@ -194,6 +194,28 @@ static cJSON *weather_json(void) {
         cJSON_AddNumberToObject(h,"age_s",(double)(w.heard[i].age_ms/1000));
         cJSON_AddItemToArray(heard,h);
     }
+    /* Rejected packets, for telling noise from a station the receiver is mis-set for:
+       inverted_ok means the packet passes every check once its bits are flipped. */
+    rf_weather_reject_t rj[RF_WEATHER_MAX_REJECTS];
+    size_t nrj=rf_weather_rejects(rj,RF_WEATHER_MAX_REJECTS);
+    cJSON *rl=cJSON_AddArrayToObject(o,"recent_rejected");
+    for(size_t i=0;i<nrj;i++) {
+        cJSON *h=cJSON_CreateObject();
+        cJSON_AddNumberToObject(h,"age_s",(double)(rj[i].age_ms/1000));
+        cJSON_AddStringToObject(h,"reason",rf_weather_reject_name(rj[i].reason));
+        if(rj[i].reason==RF_WEATHER_REJECT_OVERFLOW) {
+            cJSON_AddNullToObject(h,"rssi_dbm"); cJSON_AddNullToObject(h,"hex"); cJSON_AddFalseToObject(h,"inverted_ok");
+        } else {
+            char hex[2*RF_VEVOR_PACKET_LEN+1];
+            uint8_t inv[RF_VEVOR_PACKET_LEN];
+            for(size_t k=0;k<RF_VEVOR_PACKET_LEN;k++) { snprintf(hex+2*k,3,"%02x",rj[i].bytes[k]); inv[k]=(uint8_t)~rj[i].bytes[k]; }
+            rf_vevor_reading_t tmp;
+            cJSON_AddNumberToObject(h,"rssi_dbm",rj[i].rssi_dbm);
+            cJSON_AddStringToObject(h,"hex",hex);
+            cJSON_AddBoolToObject(h,"inverted_ok",rf_vevor_decode(inv,RF_VEVOR_PACKET_LEN,&tmp)==RF_VEVOR_OK);
+        }
+        cJSON_AddItemToArray(rl,h);
+    }
     if(!w.have_reading) { cJSON_AddNullToObject(o,"reading"); return o; }
     const rf_vevor_reading_t *r=&w.last;
     cJSON *x=cJSON_AddObjectToObject(o,"reading");

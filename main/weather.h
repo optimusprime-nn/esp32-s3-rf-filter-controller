@@ -44,3 +44,16 @@ esp_err_t rf_weather_set_station(int32_t id);
 void rf_weather_history_span(uint32_t *oldest, uint32_t *end, size_t *capacity);
 size_t rf_weather_history_copy(uint32_t seq, rf_weather_sample_t *out, size_t max, uint32_t *next);
 const char *rf_weather_receiver_name(rf_weather_receiver_t r);
+
+/* The last packets that failed decoding, kept to tell a mis-set receiver from noise. */
+#define RF_WEATHER_MAX_REJECTS 8
+#define RF_WEATHER_REJECT_OVERFLOW 0xFF   /* the FIFO overflowed: no bytes */
+typedef struct {
+    int64_t age_ms;
+    uint8_t reason;                       /* an rf_vevor_result_t, or RF_WEATHER_REJECT_OVERFLOW */
+    int rssi_dbm;
+    uint8_t bytes[RF_VEVOR_PACKET_LEN];   /* as received, before any inversion */
+} rf_weather_reject_t;
+/* Copies them newest first; returns how many. */
+size_t rf_weather_rejects(rf_weather_reject_t *out, size_t max);
+const char *rf_weather_reject_name(uint8_t reason);
