@@ -31,6 +31,8 @@
 #include "ota.h"
 #include "acme.h"
 #include <math.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -181,6 +183,10 @@ static cJSON *weather_json(void) {
     cJSON_AddStringToObject(o,"model","VEVOR 7-in-1");
     if(w.receiver==RF_WEATHER_DISABLED) cJSON_AddNullToObject(o,"frequency_mhz");
     else cJSON_AddNumberToObject(o,"frequency_mhz",w.frequency_khz/1000.0);
+    cJSON_AddBoolToObject(o,"invert",w.invert);
+    cJSON *rs=cJSON_AddObjectToObject(o,"rssi");
+    if(w.have_rssi) { cJSON_AddNumberToObject(rs,"floor_dbm",w.rssi_floor_dbm); cJSON_AddNumberToObject(rs,"peak_dbm",w.rssi_peak_dbm); }
+    else { cJSON_AddNullToObject(rs,"floor_dbm"); cJSON_AddNullToObject(rs,"peak_dbm"); }
     if(w.sensor_id_filter<0) cJSON_AddNullToObject(o,"station_filter");
     else { station_id(id,(uint16_t)w.sensor_id_filter); cJSON_AddStringToObject(o,"station_filter",id); }
     cJSON *p=cJSON_AddObjectToObject(o,"packets");
@@ -195,6 +201,28 @@ static cJSON *weather_json(void) {
         cJSON_AddNumberToObject(h,"rssi_dbm",w.heard[i].rssi_dbm);
         cJSON_AddNumberToObject(h,"age_s",(double)(w.heard[i].age_ms/1000));
         cJSON_AddItemToArray(heard,h);
+    }
+    /* Rejected packets, for telling noise from a station the receiver is mis-set for:
+       inverted_ok means the packet passes every check once its bits are flipped. */
+    rf_weather_reject_t rj[RF_WEATHER_MAX_REJECTS];
+    size_t nrj=rf_weather_rejects(rj,RF_WEATHER_MAX_REJECTS);
+    cJSON *rl=cJSON_AddArrayToObject(o,"recent_rejected");
+    for(size_t i=0;i<nrj;i++) {
+        cJSON *h=cJSON_CreateObject();
+        cJSON_AddNumberToObject(h,"age_s",(double)(rj[i].age_ms/1000));
+        cJSON_AddStringToObject(h,"reason",rf_weather_reject_name(rj[i].reason));
+        if(rj[i].reason==RF_WEATHER_REJECT_OVERFLOW) {
+            cJSON_AddNullToObject(h,"rssi_dbm"); cJSON_AddNullToObject(h,"hex"); cJSON_AddFalseToObject(h,"inverted_ok");
+        } else {
+            char hex[2*RF_VEVOR_PACKET_LEN+1];
+            uint8_t inv[RF_VEVOR_PACKET_LEN];
+            for(size_t k=0;k<RF_VEVOR_PACKET_LEN;k++) { snprintf(hex+2*k,3,"%02x",rj[i].bytes[k]); inv[k]=(uint8_t)~rj[i].bytes[k]; }
+            rf_vevor_reading_t tmp;
+            cJSON_AddNumberToObject(h,"rssi_dbm",rj[i].rssi_dbm);
+            cJSON_AddStringToObject(h,"hex",hex);
+            cJSON_AddBoolToObject(h,"inverted_ok",rf_vevor_decode(inv,RF_VEVOR_PACKET_LEN,&tmp)==RF_VEVOR_OK);
+        }
+        cJSON_AddItemToArray(rl,h);
     }
     if(!w.have_reading) { cJSON_AddNullToObject(o,"reading"); return o; }
     const rf_vevor_reading_t *r=&w.last;
@@ -488,6 +516,26 @@ static esp_err_t weather_station_put(httpd_req_t *req) {
     esp_err_t e=rf_weather_set_station((int32_t)id);
     if(e==ESP_ERR_NOT_SUPPORTED || e==ESP_ERR_INVALID_STATE) return send_error(req,"409 Conflict","Weather receiver is not running");
     if(e!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not save the station");
+    return send_json(req,"200 OK",weather_json());
+}
+static esp_err_t weather_radio_put(httpd_req_t *req) {
+    cJSON *body=read_json(req,SMALL_BODY);
+    if(!body) return ESP_OK;
+    rf_weather_status_t w;
+    rf_weather_status(&w);
+    const cJSON *f=cJSON_GetObjectItemCaseSensitive(body,"frequency_mhz");
+    const cJSON *inv=cJSON_GetObjectItemCaseSensitive(body,"invert");
+    uint32_t khz=w.frequency_khz;
+    bool invert=w.invert,bad=false;
+    if(f) { if(cJSON_IsNumber(f) && f->valuedouble>=779.0 && f->valuedouble<=928.0) khz=(uint32_t)lround(f->valuedouble*1000.0); else bad=true; }
+    if(inv) { if(cJSON_IsBool(inv)) invert=cJSON_IsTrue(inv); else bad=true; }
+    cJSON_Delete(body);
+    if(bad || (!f && !inv)) return send_error(req,"400 Bad Request","Give frequency_mhz (779 to 928) and/or invert (true or false)");
+    esp_err_t e=rf_weather_set_radio(khz,invert);
+    if(e==ESP_ERR_NOT_SUPPORTED || e==ESP_ERR_INVALID_STATE) return send_error(req,"409 Conflict","Weather receiver is not running");
+    if(e!=ESP_OK) return send_error(req,"500 Internal Server Error","Could not save the radio settings");
+    /* The receive task applies it within a few milliseconds; report the new values. */
+    vTaskDelay(pdMS_TO_TICKS(50));
     return send_json(req,"200 OK",weather_json());
 }
 static esp_err_t config_get(httpd_req_t *req) {
@@ -957,6 +1005,7 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/sensors/weather",.method=HTTP_GET,.handler=weather_get},
         {.uri="/api/v1/sensors/weather/history",.method=HTTP_GET,.handler=weather_history_get},
         {.uri="/api/v1/sensors/weather/station",.method=HTTP_PUT,.handler=weather_station_put},
+        {.uri="/api/v1/sensors/weather/radio",.method=HTTP_PUT,.handler=weather_radio_put},
         {.uri="/api/v1/config",.method=HTTP_GET,.handler=config_get},
         {.uri="/api/v1/config/hostname",.method=HTTP_PUT,.handler=hostname_put},
         {.uri="/api/v1/config/ntp",.method=HTTP_PUT,.handler=ntp_put},

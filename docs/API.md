@@ -121,6 +121,7 @@ A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARD
 |---|---|---|---|
 | GET | `/api/v1/sensors/weather` | The latest reading and the receiver's state | |
 | GET | `/api/v1/sensors/weather/history?hours=24` | Readings recorded on the controller, one a minute, for the last 1 to 48 hours (default 24) | |
+| PUT | `/api/v1/sensors/weather/radio` | Retune the receiver and set the FSK sense, applied at once and saved for the next boot, overriding `menuconfig`. Either field may be left out. `409` if the receiver isn't running | `{"frequency_mhz":915.05,"invert":false}` |
 | PUT | `/api/v1/sensors/weather/station` | Accept only this station, or any with `null`. Saved for the next boot. `409` if the receiver isn't running | `{"station":"f8f7"}` |
 
 | Field | Meaning |
@@ -130,6 +131,9 @@ A VEVOR 7-in-1 weather station's outdoor sensor, received by a CC1101. See [HARD
 | `station_filter` | The only station accepted, or `null` for any |
 | `packets` | `ok` (new readings), `rejected` (failed checks, including noise that looks like a packet, so this grows slowly on its own) and `ignored` (other stations) |
 | `heard` | Up to four stations heard recently, accepted or not: `station`, `rssi_dbm`, `age_s` |
+| `invert` | Whether the FSK sense is flipped |
+| `rssi` | `floor_dbm`, the quietest one-second average, and `peak_dbm`, the strongest sample, both over the last minute and sampled every 10 ms (`null` until the first second). A station burst reaching the radio shows as a peak well above the floor |
+| `recent_rejected` | The last 8 packets that failed decoding, newest first: `age_s`, `reason` (`checksum`, `counter`, `not_weather`, `short` or `overflow`), `rssi_dbm`, `hex` (the 21 bytes as received, before any inversion) and `inverted_ok` (`true` if the packet passes every check with its bits flipped, which means "Invert the FSK data" should be changed). Noise that matches the sync word lands here too, usually at low RSSI |
 | `reading` | `null` until the first packet, otherwise `station`, `channel`, `age_s`, `stale` (no packet for 90 s), `rssi_dbm`, `battery_ok`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg` (where the wind comes from), `rain_mm`, `uv_index`, `light_lux` |
 
 The history is `{"interval_s":60,"capacity_hours":48,"fields":[...],"points":[[...],...]}`, oldest first. Each point lists the values named in `fields`: `age_s`, `temperature_c`, `humidity_percent`, `wind_avg_kmh`, `wind_gust_kmh`, `wind_dir_deg`, `rain_mm`, `uv_index`, `light_lux`, `rssi_dbm`. A sample is recorded only when a reading arrives, so gaps mean the station wasn't heard. The history is kept in PSRAM, or for 6 hours in internal RAM if PSRAM is missing, and is lost at every reboot.

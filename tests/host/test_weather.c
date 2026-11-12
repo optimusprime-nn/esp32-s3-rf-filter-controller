@@ -66,7 +66,7 @@ int main(void) {
     CHECK(regs[RF_CC1101_FREQ2]==0x23 && regs[RF_CC1101_FREQ1]==0x31 && regs[RF_CC1101_FREQ0]==0x3B);
     CHECK(regs[RF_CC1101_SYNC1]==0xCA && regs[RF_CC1101_SYNC0]==0x54);
     CHECK(regs[RF_CC1101_PKTLEN]==RF_VEVOR_PACKET_LEN);
-    CHECK(regs[RF_CC1101_MDMCFG4]==0x88 && regs[RF_CC1101_MDMCFG3]==0xC6 && regs[RF_CC1101_DEVIATN]==0x44);
+    CHECK(regs[RF_CC1101_MDMCFG4]==0x58 && regs[RF_CC1101_MDMCFG3]==0xC6 && regs[RF_CC1101_DEVIATN]==0x44);
     CHECK(regs[RF_CC1101_MDMCFG2]==0x02 && regs[RF_CC1101_PKTCTRL0]==0x00 && regs[RF_CC1101_IOCFG0]==0x06);
     rf_cc1101_weather_config(915000,true,regs);
     CHECK(regs[RF_CC1101_SYNC1]==0x35 && regs[RF_CC1101_SYNC0]==0xAB);

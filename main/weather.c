@@ -32,10 +32,14 @@ static const char *TAG="weather";
 #define MARCSTATE_RX 0x0D
 #define RXBYTES_OVERFLOW 0x80
 #ifdef CONFIG_RF_WEATHER_INVERT
-#define INVERT true
+#define INVERT_DEFAULT true
 #else
-#define INVERT false
+#define INVERT_DEFAULT false
 #endif
+#define ST_RSSI 0x34
+#define RSSI_SAMPLE_MS 10
+#define NVS_KEY_FREQ "wx_freq"
+#define NVS_KEY_INVERT "wx_invert"
 #define FRAME_LEN (RF_VEVOR_PACKET_LEN+2)   /* payload plus appended RSSI and LQI */
 #define REPEAT_WINDOW_MS 5000
 #define NVS_KEY "wx_station"
@@ -45,6 +49,19 @@ static SemaphoreHandle_t lock, packet_sem;
 static rf_weather_status_t state={.receiver=RF_WEATHER_MISSING};
 static int64_t last_ok_ms,heard_ms[RF_WEATHER_MAX_HEARD];
 static rf_weather_history_t history;
+static rf_weather_reject_t rejects[RF_WEATHER_MAX_REJECTS];
+/* Radio settings: written only by rx_task, which owns the SPI device, after a request. */
+static bool invert=INVERT_DEFAULT;
+static uint32_t freq_khz=CONFIG_RF_WEATHER_FREQ_KHZ;
+static volatile bool retune_pending;
+static uint32_t pending_khz;
+static bool pending_invert;
+/* RSSI over the last minute, one slot a second. */
+#define RSSI_SLOTS 60
+static int8_t rssi_peak[RSSI_SLOTS],rssi_mean[RSSI_SLOTS];
+static size_t rssi_slot,rssi_filled;
+static int64_t reject_ms[RF_WEATHER_MAX_REJECTS];
+static size_t reject_next,reject_count;
 /* 48 hours at one sample a minute in PSRAM, or 6 hours in internal RAM without it. */
 #define HISTORY_PSRAM (48*60)
 #define HISTORY_INTERNAL (6*60)
@@ -103,19 +120,28 @@ found:
     state.heard[slot]=(rf_weather_heard_t){.id=id,.rssi_dbm=rssi};
     heard_ms[slot]=t;
 }
-static void count(uint32_t *field) {
+static void note_reject(uint8_t reason, const uint8_t *raw, int rssi) {
     xSemaphoreTake(lock,portMAX_DELAY);
-    (*field)++;
+    rf_weather_reject_t *x=&rejects[reject_next];
+    x->reason=reason;
+    x->rssi_dbm=rssi;
+    if(raw) memcpy(x->bytes,raw,RF_VEVOR_PACKET_LEN); else memset(x->bytes,0,RF_VEVOR_PACKET_LEN);
+    reject_ms[reject_next]=now_ms();
+    reject_next=(reject_next+1)%RF_WEATHER_MAX_REJECTS;
+    if(reject_count<RF_WEATHER_MAX_REJECTS) reject_count++;
+    state.packets_rejected++;
     xSemaphoreGive(lock);
 }
 static void handle_frame(uint8_t *frame) {
-    if(INVERT) for(int i=0;i<RF_VEVOR_PACKET_LEN;i++) frame[i]=(uint8_t)~frame[i];
+    uint8_t raw[RF_VEVOR_PACKET_LEN];
+    memcpy(raw,frame,sizeof(raw));
+    if(invert) for(int i=0;i<RF_VEVOR_PACKET_LEN;i++) frame[i]=(uint8_t)~frame[i];
     rf_vevor_reading_t r;
     rf_vevor_result_t res=rf_vevor_decode(frame,RF_VEVOR_PACKET_LEN,&r);
     if(res!=RF_VEVOR_OK) {
         /* Noise matching the 16-bit sync word lands here too, so this is logged at debug level. */
         ESP_LOGD(TAG,"Rejected packet (%d)",(int)res);
-        count(&state.packets_rejected);
+        note_reject((uint8_t)res,raw,rf_cc1101_rssi_dbm(frame[RF_VEVOR_PACKET_LEN]));
         return;
     }
     int64_t t=now_ms();
@@ -141,13 +167,63 @@ static void handle_frame(uint8_t *frame) {
     }
     xSemaphoreGive(lock);
 }
+static esp_err_t apply_config(uint32_t khz, bool inv) {
+    uint8_t regs[RF_CC1101_CONFIG_REGS],check[3];
+    rf_cc1101_weather_config(khz,inv,regs);
+    strobe(SIDLE);
+    esp_err_t e=write_burst(0x00,regs,sizeof(regs));
+    for(int i=0;e==ESP_OK && i<3;i++) e=read_reg((uint8_t)(RF_CC1101_FREQ2+i),&check[i]);
+    if(e==ESP_OK && memcmp(check,regs+RF_CC1101_FREQ2,3)!=0) e=ESP_ERR_INVALID_RESPONSE;
+    return e;
+}
+/* One-second RSSI statistics, so the API can show whether bursts reach the radio at all. */
+static void rssi_sample(void) {
+    static int64_t slot_start;
+    static int32_t sum,count_s;
+    static int peak=-200;
+    uint8_t raw;
+    if(read_reg(ST_RSSI,&raw)!=ESP_OK) return;
+    int dbm=rf_cc1101_rssi_dbm(raw);
+    sum+=dbm; count_s++;
+    if(dbm>peak) peak=dbm;
+    int64_t t=now_ms();
+    if(!slot_start) slot_start=t;
+    if(t-slot_start<1000) return;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    rssi_peak[rssi_slot]=(int8_t)(peak<-128?-128:peak>127?127:peak);
+    int mean=(int)(sum/count_s);
+    rssi_mean[rssi_slot]=(int8_t)(mean<-128?-128:mean);
+    rssi_slot=(rssi_slot+1)%RSSI_SLOTS;
+    if(rssi_filled<RSSI_SLOTS) rssi_filled++;
+    xSemaphoreGive(lock);
+    slot_start=t; sum=0; count_s=0; peak=-200;
+}
 static void rx_task(void *arg) {
     int64_t last_check=now_ms();
+    TickType_t wait=pdMS_TO_TICKS(RSSI_SAMPLE_MS);
+    if(!wait) wait=1;
     for(;;) {
-        bool signalled=xSemaphoreTake(packet_sem,pdMS_TO_TICKS(1000))==pdTRUE;
+        if(retune_pending) {
+            uint32_t khz=pending_khz; bool inv=pending_invert;
+            retune_pending=false;
+            esp_err_t e=apply_config(khz,inv);
+            if(e==ESP_OK) {
+                freq_khz=khz; invert=inv;
+                xSemaphoreTake(lock,portMAX_DELAY);
+                state.frequency_khz=khz; state.invert=inv; rssi_filled=0;
+                xSemaphoreGive(lock);
+                ESP_LOGI(TAG,"Listening on %lu.%03lu MHz, FSK %s",(unsigned long)(khz/1000),(unsigned long)(khz%1000),inv?"inverted":"normal");
+            } else {
+                ESP_LOGE(TAG,"Retune failed: %s; keeping %lu kHz",esp_err_to_name(e),(unsigned long)freq_khz);
+                apply_config(freq_khz,invert);
+            }
+            restart_rx();
+        }
+        bool signalled=xSemaphoreTake(packet_sem,wait)==pdTRUE;
+        if(!signalled) rssi_sample();
         uint8_t n=0;
         if(read_rxbytes(&n)!=ESP_OK) { restart_rx(); continue; }
-        if(n&RXBYTES_OVERFLOW) { count(&state.packets_rejected); restart_rx(); continue; }
+        if(n&RXBYTES_OVERFLOW) { note_reject(RF_WEATHER_REJECT_OVERFLOW,NULL,0); restart_rx(); continue; }
         if(n>=FRAME_LEN) {
             uint8_t tx[1+FRAME_LEN]={REG_FIFO|READ_BURST},rx[1+FRAME_LEN];
             if(xfer(tx,rx,sizeof(tx))==ESP_OK) handle_frame(rx+1);
@@ -155,7 +231,7 @@ static void rx_task(void *arg) {
             continue;
         }
         /* Without a packet, check every few seconds that the radio is still listening. */
-        if(!signalled && now_ms()-last_check>5000) {
+        if(!signalled && !retune_pending && now_ms()-last_check>5000) {
             last_check=now_ms();
             uint8_t marc=0;
             if(read_reg(ST_MARCSTATE,&marc)!=ESP_OK || (marc&0x1F)!=MARCSTATE_RX) {
@@ -163,6 +239,29 @@ static void rx_task(void *arg) {
                 restart_rx();
             }
         }
+    }
+}
+size_t rf_weather_rejects(rf_weather_reject_t *out, size_t max) {
+    if(!lock) return 0;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    size_t n=reject_count<max?reject_count:max;
+    int64_t t=now_ms();
+    for(size_t i=0;i<n;i++) {
+        size_t k=(reject_next+RF_WEATHER_MAX_REJECTS-1-i)%RF_WEATHER_MAX_REJECTS;
+        out[i]=rejects[k];
+        out[i].age_ms=t-reject_ms[k];
+    }
+    xSemaphoreGive(lock);
+    return n;
+}
+const char *rf_weather_reject_name(uint8_t reason) {
+    switch(reason) {
+    case RF_VEVOR_SHORT: return "short";
+    case RF_VEVOR_CHECKSUM: return "checksum";
+    case RF_VEVOR_COUNTER: return "counter";
+    case RF_VEVOR_NOT_WEATHER: return "not_weather";
+    case RF_WEATHER_REJECT_OVERFLOW: return "overflow";
+    default: return "unknown";
     }
 }
 esp_err_t rf_weather_start(void) {
@@ -180,9 +279,15 @@ esp_err_t rf_weather_start(void) {
     nvs_handle_t h;
     if(nvs_open("rfconfig",NVS_READONLY,&h)==ESP_OK) {
         int32_t id;
+        uint32_t khz;
+        uint8_t inv;
         if(nvs_get_i32(h,NVS_KEY,&id)==ESP_OK && id>=-1 && id<=0xFFFF) state.sensor_id_filter=id;
+        if(nvs_get_u32(h,NVS_KEY_FREQ,&khz)==ESP_OK && khz>=779000 && khz<=928000) freq_khz=khz;
+        if(nvs_get_u8(h,NVS_KEY_INVERT,&inv)==ESP_OK) invert=inv!=0;
         nvs_close(h);
     }
+    state.frequency_khz=freq_khz;
+    state.invert=invert;
     spi_bus_config_t bus={.mosi_io_num=CONFIG_RF_WEATHER_MOSI_GPIO,.miso_io_num=CONFIG_RF_WEATHER_MISO_GPIO,
         .sclk_io_num=CONFIG_RF_WEATHER_SCK_GPIO,.quadwp_io_num=-1,.quadhd_io_num=-1,.max_transfer_sz=64};
     esp_err_t e=spi_bus_initialize(SPI2_HOST,&bus,SPI_DMA_DISABLED);
@@ -200,11 +305,7 @@ esp_err_t rf_weather_start(void) {
         ESP_LOGW(TAG,"No CC1101 found (part 0x%02x, version 0x%02x); weather receiver off",part,version);
         return ESP_OK;
     }
-    uint8_t regs[RF_CC1101_CONFIG_REGS],check[3];
-    rf_cc1101_weather_config(CONFIG_RF_WEATHER_FREQ_KHZ,INVERT,regs);
-    e=write_burst(0x00,regs,sizeof(regs));
-    for(int i=0;e==ESP_OK && i<3;i++) e=read_reg((uint8_t)(RF_CC1101_FREQ2+i),&check[i]);
-    if(e!=ESP_OK || memcmp(check,regs+RF_CC1101_FREQ2,3)!=0) {
+    if(apply_config(freq_khz,invert)!=ESP_OK) {
         ESP_LOGE(TAG,"CC1101 did not accept its configuration; check the SPI wiring");
         return ESP_OK;
     }
@@ -219,8 +320,8 @@ esp_err_t rf_weather_start(void) {
     state.receiver=RF_WEATHER_RUNNING;
     state.chip_version=version;
     xSemaphoreGive(lock);
-    ESP_LOGI(TAG,"CC1101 version 0x%02x listening on %lu.%03lu MHz",version,
-        (unsigned long)(CONFIG_RF_WEATHER_FREQ_KHZ/1000),(unsigned long)(CONFIG_RF_WEATHER_FREQ_KHZ%1000));
+    ESP_LOGI(TAG,"CC1101 version 0x%02x listening on %lu.%03lu MHz, FSK %s",version,
+        (unsigned long)(freq_khz/1000),(unsigned long)(freq_khz%1000),invert?"inverted":"normal");
     return ESP_OK;
 }
 void rf_weather_status(rf_weather_status_t *out) {
@@ -230,6 +331,15 @@ void rf_weather_status(rf_weather_status_t *out) {
     *out=state;
     out->age_ms=state.have_reading?t-last_ok_ms:-1;
     for(size_t i=0;i<state.heard_count;i++) out->heard[i].age_ms=t-heard_ms[i];
+    out->have_rssi=rssi_filled>0;
+    if(out->have_rssi) {
+        int floor_v=127,peak_v=-128;
+        for(size_t i=0;i<rssi_filled;i++) {
+            if(rssi_mean[i]<floor_v) floor_v=rssi_mean[i];
+            if(rssi_peak[i]>peak_v) peak_v=rssi_peak[i];
+        }
+        out->rssi_floor_dbm=floor_v; out->rssi_peak_dbm=peak_v;
+    }
     xSemaphoreGive(lock);
 }
 size_t rf_weather_history_copy(uint32_t seq, rf_weather_sample_t *out, size_t max, uint32_t *next) {
@@ -266,6 +376,22 @@ esp_err_t rf_weather_set_station(int32_t id) {
     else ESP_LOGI(TAG,"Accepting only weather station %04lx",(unsigned long)id);
     return ESP_OK;
 }
+esp_err_t rf_weather_set_radio(uint32_t khz, bool inv) {
+    if(khz<779000 || khz>928000) return ESP_ERR_INVALID_ARG;
+    if(!lock || state.receiver!=RF_WEATHER_RUNNING) return ESP_ERR_INVALID_STATE;
+    nvs_handle_t h;
+    esp_err_t e=nvs_open("rfconfig",NVS_READWRITE,&h);
+    if(e!=ESP_OK) return e;
+    e=nvs_set_u32(h,NVS_KEY_FREQ,khz);
+    if(e==ESP_OK) e=nvs_set_u8(h,NVS_KEY_INVERT,inv?1:0);
+    if(e==ESP_OK) e=nvs_commit(h);
+    nvs_close(h);
+    if(e!=ESP_OK) return e;
+    pending_khz=khz; pending_invert=inv;
+    retune_pending=true;
+    xSemaphoreGive(packet_sem);
+    return ESP_OK;
+}
 
 #else
 
@@ -277,8 +403,11 @@ void rf_weather_status(rf_weather_status_t *out) {
     *out=(rf_weather_status_t){.receiver=RF_WEATHER_DISABLED,.sensor_id_filter=-1,.age_ms=-1};
 }
 esp_err_t rf_weather_set_station(int32_t id) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t rf_weather_set_radio(uint32_t khz, bool inv) { return ESP_ERR_NOT_SUPPORTED; }
 size_t rf_weather_history_copy(uint32_t seq, rf_weather_sample_t *out, size_t max, uint32_t *next) { *next=0; return 0; }
 void rf_weather_history_span(uint32_t *oldest, uint32_t *end, size_t *capacity) { *oldest=*end=0; *capacity=0; }
+size_t rf_weather_rejects(rf_weather_reject_t *out, size_t max) { return 0; }
+const char *rf_weather_reject_name(uint8_t reason) { return "unknown"; }
 
 #endif
 

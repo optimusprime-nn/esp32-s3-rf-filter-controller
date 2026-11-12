@@ -15,8 +15,8 @@ void rf_cc1101_weather_config(uint32_t khz, bool invert, uint8_t regs[RF_CC1101_
         [0x03]=0x47,          /* FIFOTHR */
         [0x07]=0x24,          /* PKTCTRL1: PQT 1, append RSSI and LQI */
         [0x08]=0x00,          /* PKTCTRL0: fixed length, no CRC, no whitening */
-        [0x0B]=0x06,          /* FSCTRL1: IF 152 kHz */
-        [0x10]=0x88,          /* MDMCFG4: RX bandwidth 203 kHz, DRATE_E 8 */
+        [0x0B]=0x08,          /* FSCTRL1: IF 203 kHz, for the wider filter */
+        [0x10]=0x58,          /* MDMCFG4: RX bandwidth 325 kHz, DRATE_E 8 */
         [0x11]=0xC6,          /* MDMCFG3: DRATE_M 198 -> 11.257 kBaud */
         [0x12]=0x02,          /* MDMCFG2: 2-FSK, 16 of 16 sync bits */
         [0x13]=0x22,          /* MDMCFG1 */
@@ -25,7 +25,7 @@ void rf_cc1101_weather_config(uint32_t khz, bool invert, uint8_t regs[RF_CC1101_
         [0x16]=0x07,          /* MCSM2 */
         [0x17]=0x30,          /* MCSM1: idle after a packet */
         [0x18]=0x18,          /* MCSM0: calibrate when leaving idle */
-        [0x19]=0x16,          /* FOCCFG: track up to a quarter of the bandwidth */
+        [0x19]=0x16,          /* FOCCFG: track up to a quarter of the bandwidth, +-81 kHz */
         [0x1A]=0x6C,          /* BSCFG */
         [0x1B]=0x43,          /* AGCCTRL2 */
         [0x1C]=0x40,          /* AGCCTRL1 */
