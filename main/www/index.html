@@ -29,6 +29,9 @@ form{display:grid;gap:8px}
 label{display:grid;gap:2px;color:var(--muted);font-size:13px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #msg{min-height:1.4em}
+.tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:1px solid var(--line)}
+.tabs a{padding:6px 12px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a[aria-current]{color:var(--text);border-color:var(--accent)}
 .bad{color:var(--bad)}.ok{color:var(--ok)}
 .wide{grid-column:1/-1}
 .wx{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:10px}
@@ -43,6 +46,7 @@ select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--li
 </head>
 <body>
 <main>
+<nav class="tabs"><a href="/" aria-current="page">Dashboard</a><a href="/weather">Weather</a><a href="/gpio">GPIO</a></nav>
 <h1>RF Controller</h1>
 <p id="msg" role="status"></p>
 <div class="grid">
