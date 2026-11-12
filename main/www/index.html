@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RF Controller</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231f6feb'/><path d='M4 24h5c2 0 2.5-14 5-14h4c2.5 0 3 14 5 14h5' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--text:#1b1f24;--muted:#5b6470;--line:#d8dde3;--accent:#1f6feb;--bad:#c62828;--ok:#2e7d32}
 @media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1f24;--text:#e8eaed;--muted:#9aa3ad;--line:#2f353c;--accent:#58a6ff;--bad:#ff6b6b;--ok:#6ccf76}}
@@ -28,6 +29,9 @@ form{display:grid;gap:8px}
 label{display:grid;gap:2px;color:var(--muted);font-size:13px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #msg{min-height:1.4em}
+.tabs{display:flex;gap:4px;margin:0 0 14px;border-bottom:1px solid var(--line)}
+.tabs a{padding:6px 12px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a[aria-current]{color:var(--text);border-color:var(--accent)}
 .bad{color:var(--bad)}.ok{color:var(--ok)}
 .wide{grid-column:1/-1}
 .wx{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:10px}
@@ -42,6 +46,7 @@ select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--li
 </head>
 <body>
 <main>
+<nav class="tabs"><a href="/" aria-current="page">Dashboard</a><a href="/weather">Weather</a><a href="/gpio">GPIO</a></nav>
 <h1>RF Controller</h1>
 <p id="msg" role="status"></p>
 <div class="grid">
@@ -165,7 +170,7 @@ function render(s){
   if(!editingFan){$('fanSlider').value=s.fan.percent;$('fanTarget').textContent=''}
   const t=$('temps');t.textContent='';
   if(!s.temperature.sensors.length)row(t,'No sensors','');
-  for(const x of s.temperature.sensors)row(t,x.source==='internal'?'ESP32-S3 (internal)':x.id,x.ok?x.celsius.toFixed(1)+' °C':'not responding');
+  for(const x of s.temperature.sensors)row(t,x.source==='internal'?'ESP32-S3 (internal)':x.source==='aht'?'AHT20/AHT30 ('+x.id+(x.bus===2?', bus 2':'')+')':x.id,x.ok?x.celsius.toFixed(1)+' °C'+(x.humidity_percent===null?'':', '+x.humidity_percent.toFixed(1)+' % RH'):'not responding');
   const d=$('device');d.textContent='';
   row(d,'Hostname',s.device.hostname);row(d,'IPv4',s.device.ipv4||'none');row(d,'Firmware',s.device.firmware);
   row(d,'Uptime',Math.floor(s.system.uptime_ms/1000)+' s');row(d,'Time',s.time.synchronized?new Date(s.time.unix_time*1000).toISOString().replace('.000',''):'not synchronised');

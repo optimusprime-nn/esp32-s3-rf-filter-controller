@@ -119,6 +119,8 @@ Wire them as in [HARDWARE.md](HARDWARE.md#fan). With no fan connected, `status` 
 | Press reset and watch the fan | Full speed until the firmware starts, then the saved speed |
 | `temps` with an LM75-family sensor at `0x48` | `internal` and `i2c-0x48` both show plausible readings |
 | Unplug the I2C sensor, then `temps` | `i2c-0x48: not responding`; reconnecting restores readings |
+| `temps` with an AHT20 or AHT30 on the bus at boot | `aht-0x38` shows a plausible temperature and humidity; breathing on it raises the humidity within a few seconds |
+| `temps` with a second AHT20/AHT30 on GPIO17/18 at boot | `aht2-0x38` shows readings too; breathing on one sensor raises only its humidity |
 
 ## 8. Check the weather station receiver
 Wire the CC1101 as in [HARDWARE.md](HARDWARE.md#weather-station-receiver). Without one, the log shows `No CC1101 found` and `weather` shows `receiver missing`, which is expected.

@@ -25,6 +25,7 @@
 #include "provisioning.h"
 #include "temp_sensor.h"
 #include "weather_feed.h"
+#include "gpio_info.h"
 #include "time_service.h"
 #include "weather.h"
 #include "sdr_power.h"
@@ -54,6 +55,7 @@ static unsigned claim_failures;
 #define MAX_CLAIM_FAILURES 5
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern const char weather_html_start[] asm("_binary_weather_html_start");
+extern const char gpio_html_start[] asm("_binary_gpio_html_start");
 extern esp_err_t rf_network_get_ip(char *out, size_t len);
 extern esp_err_t rf_network_get_info(char *ip, char *netmask, char *gateway, size_t len);
 static int64_t now_ms(void) {
@@ -253,10 +255,13 @@ static cJSON *temperature_json(void) {
     for(size_t i=0;i<n;i++) {
         cJSON *s=cJSON_CreateObject();
         cJSON_AddStringToObject(s,"id",r[i].id);
-        cJSON_AddStringToObject(s,"source",r[i].internal?"internal":"lm75");
-        if(r[i].internal) cJSON_AddNullToObject(s,"address"); else cJSON_AddNumberToObject(s,"address",r[i].address);
+        cJSON_AddStringToObject(s,"source",rf_temp_source_name(r[i].source));
+        if(r[i].source==RF_TEMP_INTERNAL) { cJSON_AddNullToObject(s,"bus"); cJSON_AddNullToObject(s,"address"); }
+        else { cJSON_AddNumberToObject(s,"bus",r[i].bus); cJSON_AddNumberToObject(s,"address",r[i].address); }
         cJSON_AddBoolToObject(s,"ok",r[i].ok);
         if(r[i].ok) cJSON_AddNumberToObject(s,"celsius",r[i].millicelsius/1000.0); else cJSON_AddNullToObject(s,"celsius");
+        if(r[i].ok && r[i].has_humidity) cJSON_AddNumberToObject(s,"humidity_percent",r[i].millipercent_rh/1000.0);
+        else cJSON_AddNullToObject(s,"humidity_percent");
         cJSON_AddItemToArray(list,s);
     }
     return o;
@@ -463,6 +468,41 @@ static esp_err_t weather_page(httpd_req_t *req) {
     httpd_resp_set_type(req,"text/html; charset=utf-8");
     no_store(req);
     return httpd_resp_sendstr(req,weather_html_start);
+}
+static esp_err_t gpio_page(httpd_req_t *req) {
+    httpd_resp_set_type(req,"text/html; charset=utf-8");
+    no_store(req);
+    return httpd_resp_sendstr(req,gpio_html_start);
+}
+static void add_str_or_null(cJSON *o, const char *k, const char *v) {
+    if(v && v[0]) cJSON_AddStringToObject(o,k,v); else cJSON_AddNullToObject(o,k);
+}
+static esp_err_t gpio_get(httpd_req_t *req) {
+    rf_gpio_info_t *pins=calloc(RF_GPIO_INFO_MAX,sizeof(*pins));
+    if(!pins) return send_error(req,"500 Internal Server Error","Out of memory");
+    size_t n=rf_gpio_info(pins,RF_GPIO_INFO_MAX);
+    cJSON *o=cJSON_CreateObject(),*list=cJSON_AddArrayToObject(o,"pins");
+    for(size_t i=0;i<n;i++) {
+        const rf_gpio_info_t *p=&pins[i];
+        cJSON *x=cJSON_CreateObject();
+        cJSON_AddNumberToObject(x,"gpio",p->gpio);
+        add_str_or_null(x,"function",p->function);
+        add_str_or_null(x,"group",p->group);
+        add_str_or_null(x,"note",p->note);
+        add_str_or_null(x,"detail",p->detail);
+        cJSON_AddBoolToObject(x,"config_read",p->config_read);
+        if(p->level<0) cJSON_AddNullToObject(x,"level"); else cJSON_AddNumberToObject(x,"level",p->level);
+        cJSON_AddBoolToObject(x,"input",p->input);
+        cJSON_AddBoolToObject(x,"output",p->output);
+        cJSON_AddBoolToObject(x,"open_drain",p->open_drain);
+        cJSON_AddBoolToObject(x,"pull_up",p->pull_up);
+        cJSON_AddBoolToObject(x,"pull_down",p->pull_down);
+        cJSON_AddBoolToObject(x,"peripheral",p->peripheral);
+        cJSON_AddNumberToObject(x,"drive",p->drive);
+        cJSON_AddItemToArray(list,x);
+    }
+    free(pins);
+    return send_json(req,"200 OK",o);
 }
 static esp_err_t weather_station_put(httpd_req_t *req) {
     cJSON *body=read_json(req,SMALL_BODY);
@@ -819,6 +859,8 @@ static esp_err_t metrics_get(httpd_req_t *req) {
     for(size_t i=0;i<count;i++) if(r[i].ok) EMIT("rf_temperature_celsius{sensor=\"%s\"} %.3f\n",r[i].id,r[i].millicelsius/1000.0);
     EMIT("# TYPE rf_temperature_sensor_ok gauge\n");
     for(size_t i=0;i<count;i++) EMIT("rf_temperature_sensor_ok{sensor=\"%s\"} %d\n",r[i].id,r[i].ok?1:0);
+    EMIT("# TYPE rf_humidity_percent gauge\n");
+    for(size_t i=0;i<count;i++) if(r[i].ok && r[i].has_humidity) EMIT("rf_humidity_percent{sensor=\"%s\"} %.2f\n",r[i].id,r[i].millipercent_rh/1000.0);
     rf_weather_status_t w;
     rf_weather_status(&w);
     if(w.receiver==RF_WEATHER_RUNNING) {
@@ -962,6 +1004,8 @@ esp_err_t web_start(void) {
         {.uri="/api/v1/fan",.method=HTTP_PUT,.handler=fan_put},
         {.uri="/api/v1/sensors/temperature",.method=HTTP_GET,.handler=temperature_get},
         {.uri="/weather",.method=HTTP_GET,.handler=weather_page},
+        {.uri="/gpio",.method=HTTP_GET,.handler=gpio_page},
+        {.uri="/api/v1/gpio",.method=HTTP_GET,.handler=gpio_get},
         {.uri="/api/v1/sensors/weather",.method=HTTP_GET,.handler=weather_get},
         {.uri="/api/v1/sensors/weather/history",.method=HTTP_GET,.handler=weather_history_get},
         {.uri="/api/v1/sensors/weather/station",.method=HTTP_PUT,.handler=weather_station_put},

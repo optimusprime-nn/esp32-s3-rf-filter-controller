@@ -64,6 +64,7 @@ Destructive actions need a header with a fixed word. Without it the device answe
 | Method | Path | Page |
 |---|---|---|
 | GET | `/` | Dashboard (before the claim: the enrollment information page). It refreshes every second from `GET /api/v1/status` |
+| GET | `/gpio` | GPIO page: every pin's function, live level and setup, every 2 seconds |
 | GET | `/weather` | Weather station page: current conditions every 5 seconds, and charts of the history over 1, 6, 24 or 48 hours |
 
 To use the dashboard in a browser, import your client certificate (for example `admin-client.p12`) into the browser or the operating system's certificate store.
@@ -86,7 +87,7 @@ To use the dashboard in a browser, import your client certificate (for example `
 | `rf` | `filter` (1 to 4) |
 | `fan` | `percent`, `rpm` (`null` without a tachometer), `pwm_gpio`, `tach_gpio` (`-1` for none) |
 | `weather` | As `GET /api/v1/sensors/weather` |
-| `temperature` | `sensors`: a list of `{"id","source","address","ok","celsius"}`. `address` is `null` and `source` is `internal` for the ESP32-S3's own sensor; I2C sensors have `source` `lm75` and their 7-bit address. `celsius` is `null` while `ok` is `false` |
+| `temperature` | `sensors`: a list of `{"id","source","bus","address","ok","celsius","humidity_percent"}`. `bus` and `address` are `null` and `source` is `internal` for the ESP32-S3's own sensor. I2C sensors have their `bus` (1 or 2), their 7-bit address and `source` `lm75`, or `aht` for an AHT20/AHT30 (id `aht-0x38` on bus 1, `aht2-0x38` on bus 2). `celsius` is `null` while `ok` is `false`. `humidity_percent` is relative humidity from an AHT20/AHT30, and `null` for other sensors or while `ok` is `false` |
 | `provisioning` | `wifi` and `tls` (each `true` once stored), `management_claimed` |
 | `console` | `mode` (`mtls`), `server_certificate` (`bootstrap` or `provisioned`) |
 
@@ -156,6 +157,14 @@ Each line is one JSON object ending in `\n`:
 ```
 
 The fields match the `reading` object of `GET /api/v1/sensors/weather`. A client that can't take a line at once is disconnected rather than allowed to stall the feed, so read continuously. To see it from a PC: `nc 192.168.2.51 30090`.
+
+## GPIO
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/gpio` | Every GPIO the ESP32-S3 has, in order |
+
+The reply is `{"pins":[...]}`. Each pin has `gpio`; `function` and `group` (`rf`, `sdr`, `fan`, `i2c`, `weather`, `usb`, `flash`) when the firmware uses it, otherwise `null`; `note` for strapping, flash, PSRAM and UART0 pins; `detail`, what the pin is doing now, such as `Filter 2 selected` or the sensors found on an I2C bus; `config_read` (`false` for flash and PSRAM pins, which aren't read); `level` (`0`, `1`, or `null` when it can't be read without changing the pin); and its setup: `input`, `output`, `open_drain`, `pull_up`, `pull_down`, `peripheral` (driven by PWM, I2C, SPI or USB rather than as a plain GPIO) and `drive` (0 to 3). Reading it never changes a pin.
 
 ## Configuration
 
@@ -237,6 +246,7 @@ Images aren't signed: anyone with a management client certificate can install fi
 | `rf_fan_rpm` | gauge | Absent without a tachometer |
 | `rf_temperature_celsius` | gauge | `sensor`, for each sensor reading `ok` |
 | `rf_temperature_sensor_ok` | gauge | `sensor` |
+| `rf_humidity_percent` | gauge | `sensor`, for each AHT20/AHT30 reading `ok` |
 | `rf_weather_packets_total` | counter | `result`: `ok`, `rejected` or `ignored`. Only while the receiver runs |
 | `rf_weather_last_seen_seconds`, `rf_weather_rssi_dbm`, `rf_weather_battery_ok` | gauge | `station`. These and the weather metrics below appear once a reading has arrived |
 | `rf_weather_temperature_celsius`, `rf_weather_humidity_percent` | gauge | `station` |
