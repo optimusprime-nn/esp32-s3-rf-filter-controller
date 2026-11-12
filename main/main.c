@@ -59,8 +59,6 @@ void app_main(void) {
     if(e!=ESP_OK) ESP_LOGW(TAG,"Temperature sensors unavailable: %s",esp_err_to_name(e));
     e=rf_weather_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"Weather receiver unavailable: %s",esp_err_to_name(e));
-    e=rf_weather_feed_start();
-    if(e!=ESP_OK) ESP_LOGW(TAG,"Weather feed unavailable: %s",esp_err_to_name(e));
     /* Before anything below can return early: an unprovisioned device must still be reachable over USB. */
     e=rf_usb_console_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"USB provisioning console unavailable: %s",esp_err_to_name(e));
@@ -70,6 +68,9 @@ void app_main(void) {
     e=network_start(&settings);
     if(e!=ESP_OK) { ESP_LOGW(TAG,"Network unavailable: %s",esp_err_to_name(e)); return; }
     ESP_ERROR_CHECK(rf_time_service_start(settings.ntp_servers[0],settings.ntp_servers[1]));
+    /* Needs the network stack: lwIP panics on a socket opened before network_start. */
+    e=rf_weather_feed_start();
+    if(e!=ESP_OK) ESP_LOGW(TAG,"Weather feed unavailable: %s",esp_err_to_name(e));
     /* Enrollment only until claimed, then mTLS; see web.c. */
     e=web_start();
     if(e!=ESP_OK) ESP_LOGW(TAG,"HTTPS management unavailable: %s",esp_err_to_name(e));
