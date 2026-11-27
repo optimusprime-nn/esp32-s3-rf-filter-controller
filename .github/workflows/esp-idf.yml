@@ -69,6 +69,8 @@ jobs:
           cp fw/sdkconfig "${dest}/firmware/"
           cp -r tools/setup "${dest}/setup"
           rm -rf "${dest}/setup/tests"
+          cp -r tools/weewx "${dest}/weewx"
+          rm -rf "${dest}/weewx/tests"
           cp docs/SETUP_TOOL.md "${dest}/"
           (cd pkg && zip -r "../${name}.zip" "${name}")
           sha256sum "${name}.zip" > SHA256SUMS.txt
