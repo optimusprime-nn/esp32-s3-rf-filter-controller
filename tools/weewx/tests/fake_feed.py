@@ -1,6 +1,6 @@
 """A stand-in for the controller's weather feed, for the WeeWX install test.
 
-Serves one client at a time on 127.0.0.1:<port>, sending a new reading every 3 s,
+Serves one client at a time on 127.0.0.1:<port>, sending a new reading every 6 s,
 with the rain total rising, in the controller's line format."""
 import json
 import socket
@@ -26,6 +26,6 @@ while True:
             conn.sendall((json.dumps(reading) + '\n').encode())
             n += 1
             rain += 0.2
-            time.sleep(3)
+            time.sleep(6)
     except OSError:
         conn.close()

@@ -29,13 +29,18 @@ python "$here/tests/fake_feed.py" "$port" &
 feed=$!
 sleep 1
 out="$root/weewxd.out"
-timeout 20 weewxd --config="$root/weewx.conf" >"$out" 2>&1 || true
+timeout 30 weewxd --config="$root/weewx.conf" >"$out" 2>&1 || true
 cat "$out"
 
 loops=$(grep -c '^LOOP:' "$out" || true)
 echo "loop packets: $loops"
 [ "$loops" -ge 3 ] || { echo "FAIL: expected at least 3 loop packets"; exit 1; }
 grep -q 'RFController\|rfcontroller' "$out" || { echo "FAIL: driver not loaded"; exit 1; }
-# StdPrint shows converted observations: 20.x C outside, 2 m/s wind (7.2 km/h), 0.2 mm rain per reading.
-grep '^LOOP:' "$out" | tail -1 | grep -q "'outTemp': 2[0-9]\." || { echo "FAIL: outTemp missing"; exit 1; }
+# The station's units are US: 20 C is 68 F, the fake 12670 lux is 100 W/m2, and the rain
+# total rises 0.2 mm (0.00787 in) per reading after the first, which only sets the baseline.
+last=$(grep '^LOOP:' "$out" | tail -1)
+echo "$last" | grep -q 'outTemp: 6[89]\.' || { echo "FAIL: outTemp"; exit 1; }
+echo "$last" | grep -q 'luminosity: 12670.0' || { echo "FAIL: luminosity"; exit 1; }
+echo "$last" | grep -q 'radiation: 100.0' || { echo "FAIL: radiation"; exit 1; }
+echo "$last" | grep -q 'rain: 0.0078' || { echo "FAIL: rain per reading"; exit 1; }
 echo "PASS"
