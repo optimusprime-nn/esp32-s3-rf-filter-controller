@@ -158,6 +158,8 @@ Each line is one JSON object ending in `\n`:
 
 The fields match the `reading` object of `GET /api/v1/sensors/weather`. A client that can't take a line at once is disconnected rather than allowed to stall the feed, so read continuously. To see it from a PC: `nc 192.168.2.51 30090`.
 
+For [WeeWX](https://weewx.com), [tools/weewx](../tools/weewx/readme.md) is a driver that reads this feed.
+
 ## GPIO
 
 | Method | Path | Purpose |

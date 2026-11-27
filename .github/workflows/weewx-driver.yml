@@ -1,0 +1,29 @@
+name: WeeWX driver
+
+on:
+  push:
+    branches: [main]
+    paths: ["tools/weewx/**", ".github/workflows/weewx-driver.yml"]
+  pull_request:
+    paths: ["tools/weewx/**", ".github/workflows/weewx-driver.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        python: ["3.9", "3.12"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install weewx
+      - name: Unit tests
+        working-directory: tools/weewx
+        run: python -m unittest discover -s tests -v
+      - name: Install with weectl and run weewxd
+        run: sh tools/weewx/tests/install_test.sh
